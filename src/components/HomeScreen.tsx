@@ -74,7 +74,7 @@ export default function HomeScreen() {
       {/* 2. The Cinematic Hero & Loader */}
       <div
         ref={heroContainerRef}
-        className={`relative w-full ${isLoaded ? "h-[300vh]" : "h-screen"}`}
+        className={`relative w-full ${isLoaded ? "h-[150vh]" : "h-screen"}`}
       >
         <div className="sticky top-0 h-screen w-full overflow-hidden ">
           <HeroSection

@@ -6,8 +6,9 @@
  * Key design decisions:
  * - object-fit:contain sampling: cells are built over the image's contained
  *   region only, so no stretching regardless of container shape.
- * - Canvas pixel dimensions are always kept in sync with the container's
- *   actual current size via ResizeObserver — no debounce lag causes mismatch.
+ * - Canvas pixel dimensions are kept in sync with the container's actual
+ *   size via a SETTLE-DEBOUNCED ResizeObserver (see below) — rebuilds only
+ *   happen once resizing has stopped, not on every intermediate frame.
  * - ctx.font is set once per quantised size bucket per frame (~95% reduction).
  * - Gamma-corrected brightness mapping gives proper contrast (shadows are
  *   dark, highlights are bright, midtones are readable).
@@ -44,7 +45,7 @@ interface Cell {
   readonly sg: number;
   readonly sb: number;
   readonly revealAt: number;
-  
+
   // NEW: Pre-calculated explosion vectors so it chunks apart beautifully
   readonly vx: number;
   readonly vy: number;
@@ -59,9 +60,17 @@ interface Cell {
 
 const SCRAMBLE = "@#$%&*01RAPS!?~";
 const SCATTER_WORDS = [
-  "DESIGN", "BUILD", "DEPLOY", "CODE", 
-  "CREATE", "REACT", "NODE", "TYPESCRIPT", 
-  "FRONTEND", "BACKEND", "NEXTJS"
+  "DESIGN",
+  "BUILD",
+  "DEPLOY",
+  "CODE",
+  "CREATE",
+  "REACT",
+  "NODE",
+  "TYPESCRIPT",
+  "FRONTEND",
+  "BACKEND",
+  "NEXTJS",
 ];
 const FONT_FAMILY = '"Courier New", Courier, monospace';
 const ALPHA_LERP = 0.06;
@@ -200,33 +209,36 @@ export function InteractiveAsciiPortrait({
           // We group cells into geometric "chunks" (8 columns wide, 2 rows tall)
           const chunkX = Math.floor(col / 8);
           const chunkY = Math.floor(row / 2);
-          
+
           // Seed determines chunk word & vector direction
           const seed = Math.abs(chunkX * 13.1 + chunkY * 7.9);
           const wordIndex = Math.floor(seed) % SCATTER_WORDS.length;
           const word = SCATTER_WORDS[wordIndex];
-          
+
           // Spells out the word horizontally within the chunk
           const expChar = word[col % word.length];
 
           // Calculate pre-baked explosion trajectory per chunk
           const chunkAngle = Math.sin(seed) * Math.PI * 2;
           const chunkSpeed = 1500 + Math.abs(Math.cos(seed)) * 3000;
-          
+
           // Add a slight radial push so it generally expands outward
           const dxCenter = gx - canvasW / 2;
           const dyCenter = gy - canvasH / 2;
-          const distFromCenter = Math.sqrt(dxCenter * dxCenter + dyCenter * dyCenter) || 1;
+          const distFromCenter =
+            Math.sqrt(dxCenter * dxCenter + dyCenter * dyCenter) || 1;
           const radialVx = (dxCenter / distFromCenter) * 1200;
           const radialVy = (dyCenter / distFromCenter) * 1200;
-          
+
           // Micro-scatter to make chunks look organic, not perfectly solid rectangles
           const cellScatterX = Math.sin(col * 1.1 + row * 2.3) * 300;
           const cellScatterY = Math.cos(col * 1.5 + row * 1.9) * 300;
 
           // Combine vectors into immutable precalculated properties
-          const vx = Math.cos(chunkAngle) * chunkSpeed + radialVx + cellScatterX;
-          const vy = Math.sin(chunkAngle) * chunkSpeed + radialVy + cellScatterY;
+          const vx =
+            Math.cos(chunkAngle) * chunkSpeed + radialVx + cellScatterX;
+          const vy =
+            Math.sin(chunkAngle) * chunkSpeed + radialVy + cellScatterY;
 
           cells.push({
             rx: gx,
@@ -246,7 +258,7 @@ export function InteractiveAsciiPortrait({
             revealAt,
             revealed: false,
             vx,
-            vy
+            vy,
           });
           idx++;
         }
@@ -338,7 +350,7 @@ export function InteractiveAsciiPortrait({
 
         let drawSize = cell.cs;
         if (explosionPower > 0) {
-          drawSize = cell.cs * (1 + explosionPower * 8); 
+          drawSize = cell.cs * (1 + explosionPower * 8);
         }
 
         let expAlphaFade = 1;
@@ -367,7 +379,7 @@ export function InteractiveAsciiPortrait({
           // Switch to the readable words once scrolling starts!
           let char = cell.char;
           if (scrollProgress > 0.05) {
-            char = cell.expChar; 
+            char = cell.expChar;
           } else if (inf > 0.55 && Math.random() < inf * 0.25) {
             char = SCRAMBLE[Math.floor(Math.random() * SCRAMBLE.length)];
           }
@@ -423,16 +435,39 @@ export function InteractiveAsciiPortrait({
 
     img.onload = tryFirstBuild;
 
+    // --- Settle-gated rebuild ---
+    // A parent like the hero's expand animation resizes this container on
+    // basically every animation frame (~60x/sec) for a full second. The old
+    // code rebuilt the entire cell grid on every one of those ticks —
+    // clearing the canvas, re-walking every pixel, resetting the reveal
+    // timer — which is exactly the flicker/glitch during expand.
+    //
+    // Now every resize tick just pushes the rebuild further into the
+    // future. We only actually rebuild once resize activity has been quiet
+    // for SETTLE_DELAY_MS, at the final settled size. While a resize is in
+    // flight, the canvas just CSS-scales its last raster — cheap, smooth,
+    // glitch-free — and snaps to a single clean, crisp rebuild the moment
+    // movement stops.
+    const SETTLE_DELAY_MS = 140;
     let lastW = 0,
       lastH = 0;
+    let settleTimer: ReturnType<typeof setTimeout> | null = null;
+
     const ro = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (!entry || !imgRef.current?.complete) return;
       const { width, height } = entry.contentRect;
-      if (Math.abs(width - lastW) < 4 && Math.abs(height - lastH) < 4) return;
-      lastW = width;
-      lastH = height;
-      rebuild(width, height);
+
+      // Skip sub-pixel noise so we don't keep rescheduling for nothing.
+      if (Math.abs(width - lastW) < 1 && Math.abs(height - lastH) < 1) return;
+
+      if (settleTimer) clearTimeout(settleTimer);
+      settleTimer = setTimeout(() => {
+        lastW = width;
+        lastH = height;
+        rebuild(width, height);
+        settleTimer = null;
+      }, SETTLE_DELAY_MS);
     });
     ro.observe(container);
 
@@ -448,6 +483,7 @@ export function InteractiveAsciiPortrait({
 
     return () => {
       cancelAnimationFrame(rafRef.current);
+      if (settleTimer) clearTimeout(settleTimer);
       ro.disconnect();
       io.disconnect();
     };
