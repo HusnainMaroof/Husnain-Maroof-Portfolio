@@ -319,13 +319,27 @@ export function InteractiveAsciiPortrait({
           ty += cell.vy * explosionPower;
         }
 
-        // MOUSE PHYSICS: Dampen hover interaction during explosion
+        // MOUSE PHYSICS: Hover influence fades smoothly as the explosion
+        // takes over, instead of hard-cutting at an arbitrary threshold.
+        // Previously this was `if (explosionPower < 0.1)` — a hard gate
+        // that zeroed hover out entirely once scroll passed ~34% of the
+        // hero range (explosionPower = scrollProgress^2.5 crosses 0.1 at
+        // scrollProgress ≈ 0.4), well before the explosion was even
+        // visually disruptive. Hover then stayed dead for the rest of the
+        // scroll — including the gap/hold zones where the portrait is just
+        // sitting still and hover should still feel alive.
+        //
+        // Now hover strength simply ramps down as explosionPower ramps up,
+        // reaching zero only once the explosion is essentially complete.
+        const hoverFalloff = Math.max(0, 1 - explosionPower * 3);
         let targetInf = 0;
-        if (explosionPower < 0.1) {
+        if (hoverFalloff > 0) {
           const dxMouse = tx - mx;
           const dyMouse = ty - my;
           const distSq = dxMouse * dxMouse + dyMouse * dyMouse;
-          targetInf = distSq < radSq ? 1 - Math.sqrt(distSq) / hoverRadius : 0;
+          targetInf =
+            (distSq < radSq ? 1 - Math.sqrt(distSq) / hoverRadius : 0) *
+            hoverFalloff;
         }
 
         cell.inf += (targetInf - cell.inf) * INF_LERP;

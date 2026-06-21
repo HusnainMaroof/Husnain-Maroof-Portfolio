@@ -1,27 +1,22 @@
 "use client";
 import React, { useState, useEffect, useRef } from "react";
-import {
-  motion,
-  AnimatePresence,
-  useScroll,
-  useTransform,
-} from "framer-motion";
+import { motion, useScroll, useTransform, MotionValue } from "framer-motion";
 import { Navbar } from "./ui/NavBar";
 import { HeroSection } from "./ui/MainHeroSection";
-import { WMDSection } from "./ui/Wmdsection";
-
-// --- GLOBAL CONSTANTS ---
-const scrollWords = ["They", "are", "felt."];
+import { MyServices } from "./ui/Myservices";
+import { Footer } from "./ui/Footer";
+import { ProjectsSection } from "./ui/ProjectsSection";
 
 export default function HomeScreen() {
   const [isLoaded, setIsLoaded] = useState(false);
   const heroContainerRef = useRef<HTMLDivElement>(null);
+  const mainRef = useRef<HTMLElement>(null);
 
-  // We use a mutable ref for the canvas to read performantly without triggering React renders
+  // Hero scroll tracking
   const heroScrollRef = useRef(0);
   const [uiOpacity, setUiOpacity] = useState(1);
 
-  // Highly robust native scroll tracking to prevent dynamic height recalculation bugs
+  // Hero scroll tracking
   useEffect(() => {
     if (!isLoaded) {
       heroScrollRef.current = 0;
@@ -31,29 +26,17 @@ export default function HomeScreen() {
 
     const handleScroll = () => {
       if (!heroContainerRef.current) return;
-
       const rect = heroContainerRef.current.getBoundingClientRect();
-      // Total amount of scrollable pixels for this specific pinned section
       const totalScrollable = rect.height - window.innerHeight;
-
-      // rect.top goes negative as we scroll down.
       const currentScroll = -rect.top;
-
-      // Calculate progress between 0 and 1
       let progress = currentScroll / totalScrollable;
       progress = Math.max(0, Math.min(1, progress));
-
-      // Inject into the canvas instantly
       heroScrollRef.current = progress;
-
-      // Fade out the UI text quickly (between 0% and 15% of the scroll)
       setUiOpacity(Math.max(0, 1 - progress / 0.15));
     };
 
     window.addEventListener("scroll", handleScroll, { passive: true });
     window.addEventListener("resize", handleScroll);
-
-    // Fire once initially to sync state
     handleScroll();
 
     return () => {
@@ -64,19 +47,20 @@ export default function HomeScreen() {
 
   return (
     <main
-      className={`relative w-full  font-sans antialiased text-white hide-scrollbar ${
+      ref={mainRef}
+      className={`relative w-full font-sans antialiased text-white hide-scrollbar  ${
         !isLoaded ? "h-screen overflow-hidden" : "min-h-screen"
       }`}
     >
-      {/* 1. The Fixed Navigation (Fades in when loaded) */}
+      {/* 1. Navigation */}
       <Navbar isVisible={isLoaded} />
 
-      {/* 2. The Cinematic Hero & Loader */}
+      {/* 2. Hero Section */}
       <div
         ref={heroContainerRef}
-        className={`relative w-full ${isLoaded ? "h-[150vh]" : "h-screen"}`}
+        className={`relative w-full ${isLoaded ? "h-[400vh] " : "h-screen"} `}
       >
-        <div className="sticky top-0 h-screen w-full overflow-hidden ">
+        <div className="sticky top-0 h-screen w-full overflow-hidden">
           <HeroSection
             onComplete={() => setIsLoaded(true)}
             isLoaded={isLoaded}
@@ -86,18 +70,86 @@ export default function HomeScreen() {
         </div>
       </div>
 
-      <WMDSection />
+      {/* 3. My Services Section */}
+      <MyServices />
+      <ProjectsSection />
 
+      {/* 4. Footer */}
+      <Footer />
+
+      {/* ═══════════════════════════════════════════════════════════ */}
+      {/* GLOBAL PROGRESS BAR — Only mounts after isLoaded           */}
+      {/* ═══════════════════════════════════════════════════════════ */}
+      {isLoaded && <ProgressBarContainer key="progress-bar" />}
+
+      {/* ═══════════════════════════════════════════════════════════ */}
+      {/* SCROLL DOWN INDICATOR — Animates out when scrolled         */}
+      {/* ═══════════════════════════════════════════════════════════ */}
       {isLoaded && (
         <motion.div
-          className="fixed bottom-6 right-10 text-xs text-[#00FF88] font-tech uppercase tracking-widest animate-bounce"
+          className="fixed bottom-10 right-10 text-xs text-[#00FF88] font-mono uppercase tracking-widest z-40"
           initial={{ opacity: 0 }}
-          animate={{ opacity: isLoaded ? 1 : 0 }}
-          transition={{ duration: 1 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.6, delay: 0.5 }}
         >
-          Scroll Down ↓
+          <motion.span
+            animate={{ y: [0, 4, 0] }}
+            transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
+            className="inline-block mr-1"
+          >
+            ↓
+          </motion.span>
+          Scroll Down
         </motion.div>
       )}
     </main>
+  );
+}
+
+// Separate component — mounts only when isLoaded is true
+// This ensures useScroll reads correct document height
+function ProgressBarContainer() {
+  const { scrollYProgress } = useScroll();
+
+  const barWidth = useTransform<number, string>(
+    scrollYProgress,
+    [0, 1],
+    ["0%", "100%"],
+  );
+
+  const percentageOpacity = useTransform<number, number>(
+    scrollYProgress,
+    [0, 0.99, 1],
+    [1, 1, 0],
+  );
+
+  const percentageText = useTransform<number, string>(
+    scrollYProgress,
+    (v) => `${Math.round(v * 100)}%`,
+  );
+
+  return (
+    <motion.div
+      className="fixed bottom-0 left-0 right-0 z-50 pointer-events-none"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.6, delay: 0.3 }}
+    >
+      {/* Progress track */}
+      <div className="w-full h-0.5 bg-white/5 relative overflow-hidden">
+        <motion.div
+          className="absolute top-0 left-0 h-full bg-[#00FF88]"
+          style={{ width: barWidth }}
+        />
+      </div>
+
+      {/* Percentage */}
+      <motion.div
+        className="absolute bottom-4 right-6 text-[9px] font-mono uppercase tracking-widest text-[#00FF88]"
+        style={{ opacity: percentageOpacity }}
+      >
+        {percentageText}
+      </motion.div>
+    </motion.div>
   );
 }
