@@ -2,7 +2,6 @@
 import React, { useRef, useState, useEffect } from "react";
 import {
   motion,
-  useScroll,
   useTransform,
   useSpring,
   MotionValue,
@@ -89,8 +88,8 @@ function ServiceVisualCard({
       style={{ opacity, y: smoothY, scale: smoothScale }}
       className="absolute inset-0 flex items-center justify-center p-6 md:p-10"
     >
-      <div className="w-full h-full max-h-[600px] rounded-2xl border border-white/10 bg-[#0a0a0a] relative overflow-hidden shadow-[0_0_40px_rgba(0,0,0,0.5)] flex flex-col group">
-        <div className="absolute inset-0 bg-gradient-to-b from-white/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-700 z-0 pointer-events-none" />
+      <div className="w-full h-full max-h-150 rounded-2xl border border-white/10 bg-[#0a0a0a] relative overflow-hidden shadow-[0_0_40px_rgba(0,0,0,0.5)] flex flex-col group">
+        <div className="absolute inset-0 bg-linear-to-b from-white/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-700 z-0 pointer-events-none" />
 
         <div className="p-6 md:p-8 relative z-10 shrink-0">
           <div className="flex items-center gap-3 mb-2">
@@ -108,7 +107,7 @@ function ServiceVisualCard({
         </div>
 
         <div className="relative flex-1 w-full flex items-center justify-center z-10 overflow-hidden min-h-0">
-          <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 font-black text-white select-none pointer-events-none leading-none z-0 text-[14rem] text-white/[0.015]">
+          <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 font-black text-white select-none pointer-events-none leading-none z-0 text-[14rem] ">
             {service.index}
           </span>
           <div className="relative z-10 w-full h-full">{service.visual}</div>
@@ -175,7 +174,7 @@ function LeftPanel({
           {SERVICES.map((s, i) => (
             <motion.div
               key={i}
-              className="w-[3px] rounded-full"
+              className="w-0.5 rounded-full"
               animate={{
                 height: i === activeIndex ? 28 : 6,
                 backgroundColor: i === activeIndex ? "#00FF88" : "#2a2a2a",
@@ -270,6 +269,7 @@ function SplitSection({ progress }: { progress: MotionValue<number> }) {
 
   return (
     <motion.div style={{ opacity }} className="absolute inset-0">
+      {/* ── Desktop: two-column split ── */}
       <div className="hidden md:grid md:grid-cols-2 h-full">
         <div className="relative">
           <LeftPanel progress={progress} activeIndex={activeIndex} />
@@ -292,8 +292,9 @@ function SplitSection({ progress }: { progress: MotionValue<number> }) {
         </div>
       </div>
 
+      {/* ── Mobile: stacked ── */}
       <div className="md:hidden h-full flex flex-col">
-        <div className="sticky top-0 z-10 px-5 pt-20 pb-4 bg-gradient-to-b from-[#050505] via-[#050505]/90 to-transparent">
+        <div className="sticky top-0 z-10 px-5 pt-20 pb-4 bg-linear-to-b from-[#050505] via-[#050505]/90 to-transparent">
           <div className="flex items-center gap-2 mb-2">
             <span className="text-[9px] font-mono text-[#00FF88]">
               {SERVICES[activeIndex].index}
@@ -328,55 +329,21 @@ function SplitSection({ progress }: { progress: MotionValue<number> }) {
         </div>
       </div>
 
+      {/* ── Divider ── */}
       <div className="absolute top-0 left-1/2 w-px h-full bg-white/4 hidden md:block" />
     </motion.div>
   );
 }
 
 // ─── MAIN EXPORT ──────────────────────────────────────────────────────────────
-export function MyServices() {
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  // Internal timeline progress — drives SplitSection's per-card choreography
-  // while the section is pinned (start start → end end, i.e. only while sticky).
-  const { scrollYProgress } = useScroll({
-    target: containerRef,
-    offset: ["start start", "end end"],
-  });
-
-  const smoothProgress = useSpring(scrollYProgress, {
-    stiffness: 50,
-    damping: 25,
-    restDelta: 0.001,
-  });
-
-  // Section-level entrance/exit fade — tracks the container's position
-  // relative to the *viewport* (not the pinned-scroll range), so the whole
-  // section fades in as it scrolls into view and fades out as it scrolls
-  // past, independent of and in addition to SplitSection's internal fade.
-  const { scrollYProgress: viewportProgress } = useScroll({
-    target: containerRef,
-    offset: ["start end", "end start"],
-  });
-
-  const sectionOpacity = useTransform(
-    viewportProgress,
-    [0, 0.08, 0.92, 1],
-    [0, 1, 1, 0],
-  );
-  const smoothSectionOpacity = useSpring(sectionOpacity, {
-    stiffness: 100,
-    damping: 20,
-  });
-
+// Receives pre-smoothed MotionValue<number> from HomeScreen.
+// No useScroll, no containerRef, no tall container — just absolute inset-0.
+// SplitSection and everything inside is unchanged — it already consumes a
+// MotionValue<number> so it just works.
+export function MyServices({ progress }: { progress: MotionValue<number> }) {
   return (
-    <div ref={containerRef} className="relative h-[500vh] bg-[#050505]">
-      <motion.div
-        style={{ opacity: smoothSectionOpacity }}
-        className="sticky top-0 h-screen overflow-hidden"
-      >
-        <SplitSection progress={smoothProgress} />
-      </motion.div>
+    <div className="absolute inset-0">
+      <SplitSection progress={progress} />
     </div>
   );
 }
