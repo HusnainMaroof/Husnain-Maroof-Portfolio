@@ -1,349 +1,303 @@
 "use client";
-import React, { useRef, useState, useEffect } from "react";
-import {
-  motion,
-  useTransform,
-  useSpring,
-  MotionValue,
-  AnimatePresence,
-} from "framer-motion";
-import { Service, SERVICES } from "@/src/data/MyserviceData";
+import React, { useRef, useEffect } from "react";
+import { motion, useInView } from "framer-motion";
+import { SERVICES } from "@/src/data/MyserviceData";
 import { AnimatedText } from "./TextAnimation";
-import { cinematicEase, TIMELINE } from "@/src/types/ServicesType";
+import { useServiceWheelRedirect } from "@/src/lib/useServiceWheelRedirect";
 
-// ─── Derived constants ────────────────────────────────────────────────────────
-const TOTAL_SERVICES = SERVICES.length;
-const PER_SERVICE =
-  (TIMELINE.split.holdEnd - TIMELINE.split.enterEnd) / TOTAL_SERVICES;
+const TOTAL = SERVICES.length;
+const cinematicEase: [number, number, number, number] = [0.76, 0, 0.24, 1];
 
-// ─── HOOK: Active service index ───────────────────────────────────────────────
-function useActiveIndex(progress: MotionValue<number>): number {
-  const [idx, setIdx] = useState(0);
-
-  useEffect(() => {
-    const unsubscribe = progress.on("change", (v) => {
-      if (v < TIMELINE.split.enterEnd) {
-        setIdx(0);
-        return;
-      }
-      if (v > TIMELINE.split.holdEnd) {
-        setIdx(TOTAL_SERVICES - 1);
-        return;
-      }
-      const mapped =
-        (v - TIMELINE.split.enterEnd) /
-        (TIMELINE.split.holdEnd - TIMELINE.split.enterEnd);
-      const next = Math.min(
-        Math.floor(mapped * TOTAL_SERVICES),
-        TOTAL_SERVICES - 1,
-      );
-      setIdx(Math.max(0, next));
-    });
-    return unsubscribe;
-  }, [progress]);
-
-  return idx;
+interface ServiceCardProps {
+  cardIndex: number;
+  trackRef: React.RefObject<HTMLDivElement | null>;
 }
 
-// ─── SERVICE VISUAL CARD ──────────────────────────────────────────────────────
-interface ServiceVisualCardProps {
-  service: Service;
-  progress: MotionValue<number>;
-  sectionStart: number;
-  sectionEnd: number;
-  totalServices: number;
+interface MyServicesProps {
+  isActive: boolean;
+  seekTo: (progress: number) => void;
 }
 
-function ServiceVisualCard({
-  service,
-  progress,
-  sectionStart,
-  sectionEnd,
-  totalServices,
-}: ServiceVisualCardProps) {
-  const fadeWindow = PER_SERVICE * 0.1;
-  const holdStart = sectionStart + fadeWindow;
-  const holdEnd = sectionEnd - fadeWindow;
+// ─── SERVICE CARD ─────────────────────────────────────────────────────────────
+function ServiceCard({ cardIndex, trackRef }: ServiceCardProps) {
+  const service = SERVICES[cardIndex];
+  const ref = useRef<HTMLDivElement>(null);
 
-  const opacity = useTransform(
-    progress,
-    [sectionStart, holdStart, holdEnd, sectionEnd],
-    [0, 1, 1, 0],
-  );
-  const y = useTransform(
-    progress,
-    [sectionStart, holdStart, holdEnd, sectionEnd],
-    [60, 0, 0, -60],
-  );
-  const scale = useTransform(
-    progress,
-    [sectionStart, holdStart, holdEnd, sectionEnd],
-    [0.88, 1, 1, 0.88],
-  );
-  const smoothY = useSpring(y, { stiffness: 100, damping: 20 });
-  const smoothScale = useSpring(scale, { stiffness: 100, damping: 20 });
+  const visible = useInView(ref, {
+    root: trackRef,
+    amount: 0.5,
+    once: false,
+  });
 
   return (
-    <motion.div
-      style={{ opacity, y: smoothY, scale: smoothScale }}
-      className="absolute inset-0 flex items-center justify-center p-6 md:p-10"
+    <div
+      ref={ref}
+      className="relative flex-shrink-0 w-screen h-full grid grid-cols-2"
     >
-      <div className="w-full h-full max-h-150 rounded-2xl border border-white/10 bg-[#0a0a0a] relative overflow-hidden shadow-[0_0_40px_rgba(0,0,0,0.5)] flex flex-col group">
-        <div className="absolute inset-0 bg-linear-to-b from-white/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-700 z-0 pointer-events-none" />
-
-        <div className="p-6 md:p-8 relative z-10 shrink-0">
-          <div className="flex items-center gap-3 mb-2">
-            <span className="text-[10px] font-mono text-neutral-500 tracking-widest">
-              {service.index}
-            </span>
-            <span className="text-[10px] font-mono text-neutral-500 tracking-widest uppercase">
-              {service.category}
-            </span>
-          </div>
-          <h3 className="text-2xl md:text-3xl font-bold text-white tracking-tight">
-            {service.title}
-          </h3>
-          <p className="text-sm text-neutral-400 mt-2">{service.subtitle}</p>
-        </div>
-
-        <div className="relative flex-1 w-full flex items-center justify-center z-10 overflow-hidden min-h-0">
-          <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 font-black text-white select-none pointer-events-none leading-none z-0 text-[14rem] ">
+      {/* LEFT: text panel */}
+      <div className="flex flex-col justify-center px-10 lg:px-16 xl:px-20 relative">
+        <div className="flex items-center gap-3 mb-7">
+          <span className="text-[10px] font-mono text-[#00FF88] tracking-widest">
             {service.index}
           </span>
-          <div className="relative z-10 w-full h-full">{service.visual}</div>
+          <div className="w-6 h-px bg-[#00FF88]/60" />
+          <span className="text-[10px] uppercase tracking-[0.25em] text-neutral-500 font-medium">
+            {service.category} · {service.label}
+          </span>
         </div>
 
-        <div className="border-t border-white/10 px-6 md:px-8 py-3 md:py-4 flex items-center justify-between backdrop-blur-md bg-black/20 z-10 shrink-0 gap-4">
-          <div className="flex items-center gap-2 flex-wrap">
-            {service.tags?.map((tag) => (
-              <span
-                key={tag}
-                className="border border-white/10 rounded px-2 py-1 text-[9px] uppercase tracking-widest text-neutral-400 font-mono"
-              >
-                {tag}
-              </span>
-            ))}
-          </div>
-          <div className="flex items-center gap-3 shrink-0">
-            <motion.div
-              className="w-1.5 h-1.5 rounded-full bg-[#00FF88]"
-              animate={{ opacity: [1, 0.2, 1] }}
-              transition={{ duration: 1.6, repeat: Infinity }}
-            />
-            <span className="text-[10px] text-[#00FF88] font-mono tracking-widest">
-              {service.index} /{" "}
-              {totalServices < 10 ? `0${totalServices}` : totalServices}
+        <h3 className="text-3xl md:text-4xl lg:text-[2.75rem] font-display font-black italic uppercase leading-[0.88] mb-3">
+          <AnimatedText
+            text={service.title}
+            startReveal={visible}
+            delayOffset={0}
+            color="#FFFFFF"
+          />
+        </h3>
+
+        <motion.p
+          className="text-[11px] uppercase tracking-[0.2em] text-[#00FF88] font-medium mb-6"
+          animate={{ opacity: visible ? 1 : 0, y: visible ? 0 : 6 }}
+          transition={{ delay: 0.15, duration: 0.45, ease: cinematicEase }}
+        >
+          {service.subtitle}
+        </motion.p>
+
+        <motion.p
+          className="text-neutral-400 text-sm font-light leading-[1.75] mb-8 max-w-xs"
+          animate={{ opacity: visible ? 1 : 0, y: visible ? 0 : 8 }}
+          transition={{ delay: 0.22, duration: 0.5, ease: cinematicEase }}
+        >
+          {service.description}
+        </motion.p>
+
+        <motion.div
+          className="flex flex-wrap gap-2"
+          animate={{ opacity: visible ? 1 : 0 }}
+          transition={{ delay: 0.35, duration: 0.4 }}
+        >
+          {service.tags.map((tag) => (
+            <span
+              key={tag}
+              className="text-[9px] font-mono uppercase tracking-widest text-[#00FF88]/80 border border-[#00FF88]/20 px-2.5 py-1"
+            >
+              {tag}
             </span>
-          </div>
-        </div>
-      </div>
-    </motion.div>
-  );
-}
-
-// ─── LEFT PANEL ───────────────────────────────────────────────────────────────
-function LeftPanel({
-  progress,
-  activeIndex,
-}: {
-  progress: MotionValue<number>;
-  activeIndex: number;
-}) {
-  const service = SERVICES[activeIndex];
-  const [revealed, setRevealed] = useState(true);
-  const prevIndex = useRef(activeIndex);
-
-  useEffect(() => {
-    if (prevIndex.current !== activeIndex) {
-      setRevealed(false);
-      const t = setTimeout(() => setRevealed(true), 60);
-      prevIndex.current = activeIndex;
-      return () => clearTimeout(t);
-    }
-  }, [activeIndex]);
-
-  return (
-    <div className="relative h-full">
-      <div className="absolute top-[15%] left-10">
-        <span className="text-[18px] uppercase font-display tracking-widest text-[#00FF88] font-medium whitespace-nowrap">
-          What I Offer
-        </span>
-      </div>
-      <div className="sticky top-0 h-screen flex flex-col justify-center px-10 lg:px-16 xl:px-20">
-        <div className="absolute right-4 top-1/2 -translate-y-1/2 flex flex-col gap-2.5">
-          {SERVICES.map((s, i) => (
-            <motion.div
-              key={i}
-              className="w-0.5 rounded-full"
-              animate={{
-                height: i === activeIndex ? 28 : 6,
-                backgroundColor: i === activeIndex ? "#00FF88" : "#2a2a2a",
-              }}
-              transition={{ duration: 0.35, ease: cinematicEase }}
-            />
           ))}
-        </div>
+        </motion.div>
+      </div>
 
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={service.index}
-            initial={{ opacity: 0, x: -16 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -16 }}
-            transition={{ duration: 0.45, ease: cinematicEase }}
-            className="max-w-sm"
-          >
-            <div className="flex items-center gap-3 mb-7">
-              <span className="text-[10px] font-mono text-[#00FF88] tracking-widest">
-                {service.index}
-              </span>
-              <div className="w-6 h-px bg-[#00FF88]/60" />
-              <span className="text-[10px] uppercase tracking-[0.25em] text-neutral-500 font-medium">
-                {service.category} {service.label}
-              </span>
-            </div>
+      {/* RIGHT: visual panel */}
+      <div className="relative flex items-center justify-center p-6 md:p-10">
+        <div className="w-full h-full max-h-[85vh] rounded-2xl border border-white/10 bg-[#0a0a0a] relative overflow-hidden shadow-[0_0_40px_rgba(0,0,0,0.5)] flex flex-col group">
+          <div className="absolute inset-0 bg-gradient-to-b from-white/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-700 z-0 pointer-events-none" />
 
-            <h3 className="text-3xl md:text-4xl lg:text-[2.75rem] font-display font-black italic uppercase leading-[0.88] mb-2">
-              <AnimatedText
-                text={service.title}
-                startReveal={revealed}
-                delayOffset={0}
-                color="#FFFFFF"
-              />
-            </h3>
+          <div className="relative flex-1 w-full flex items-center justify-center z-10 overflow-hidden min-h-0">
+            {service.visual(visible)}
+          </div>
 
-            <motion.p
-              className="text-[11px] uppercase tracking-[0.2em] text-[#00FF88] font-medium mb-6"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: revealed ? 1 : 0 }}
-              transition={{ delay: 0.3, duration: 0.4 }}
-            >
-              {service.subtitle}
-            </motion.p>
-
-            <motion.p
-              className="text-neutral-400 text-sm font-light leading-[1.75] mb-8"
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: revealed ? 1 : 0, y: revealed ? 0 : 8 }}
-              transition={{ delay: 0.25, duration: 0.5, ease: cinematicEase }}
-            >
-              {service.description}
-            </motion.p>
-
-            <motion.div
-              className="flex flex-wrap gap-2"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: revealed ? 1 : 0 }}
-              transition={{ delay: 0.4, duration: 0.4 }}
-            >
+          <div className="border-t border-white/10 px-6 py-3 flex items-center justify-between backdrop-blur-md bg-black/20 z-10 shrink-0 gap-4">
+            <div className="flex items-center gap-2 flex-wrap">
               {service.tags.map((tag) => (
                 <span
                   key={tag}
-                  className="text-[9px] font-mono uppercase tracking-widest text-[#00FF88]/80 border border-[#00FF88]/20 px-2.5 py-1"
+                  className="border border-white/10 rounded px-2 py-1 text-[9px] uppercase tracking-widest text-neutral-400 font-mono"
                 >
                   {tag}
                 </span>
               ))}
-            </motion.div>
-          </motion.div>
-        </AnimatePresence>
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <motion.div
+                className="w-1.5 h-1.5 rounded-full bg-[#00FF88]"
+                animate={{ opacity: [1, 0.2, 1] }}
+                transition={{ duration: 1.6, repeat: Infinity }}
+              />
+              <span className="text-[10px] text-[#00FF88] font-mono tracking-widest">
+                {service.index} / 0{TOTAL}
+              </span>
+            </div>
+          </div>
+        </div>
       </div>
+
+      {/* Vertical divider */}
+      <div className="absolute top-0 left-1/2 w-px h-full bg-white/[0.04] pointer-events-none" />
     </div>
   );
 }
 
-// ─── SPLIT SECTION ────────────────────────────────────────────────────────────
-function SplitSection({ progress }: { progress: MotionValue<number> }) {
-  const activeIndex = useActiveIndex(progress);
+// ─── DOT NAVIGATOR ────────────────────────────────────────────────────────────
+function DotNavigator({
+  trackRef,
+}: {
+  trackRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const [active, setActive] = React.useState(0);
 
-  const opacity = useTransform(
-    progress,
-    [
-      TIMELINE.split.start - 0.03,
-      TIMELINE.split.start + 0.03,
-      TIMELINE.split.end - 0.03,
-      TIMELINE.split.end + 0.03,
-    ],
-    [0, 1, 1, 0],
-  );
+  useEffect(() => {
+    const el = trackRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      setActive(Math.round(el.scrollLeft / el.clientWidth));
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [trackRef]);
 
   return (
-    <motion.div style={{ opacity }} className="absolute inset-0">
-      {/* ── Desktop: two-column split ── */}
-      <div className="hidden md:grid md:grid-cols-2 h-full">
-        <div className="relative">
-          <LeftPanel progress={progress} activeIndex={activeIndex} />
-        </div>
-        <div className="relative">
-          {SERVICES.map((service, i) => {
-            const sectionStart = TIMELINE.split.enterEnd + i * PER_SERVICE;
-            const sectionEnd = sectionStart + PER_SERVICE;
-            return (
-              <ServiceVisualCard
-                key={service.index}
-                service={service}
-                progress={progress}
-                sectionStart={sectionStart}
-                sectionEnd={sectionEnd}
-                totalServices={TOTAL_SERVICES}
-              />
-            );
-          })}
-        </div>
-      </div>
-
-      {/* ── Mobile: stacked ── */}
-      <div className="md:hidden h-full flex flex-col">
-        <div className="sticky top-0 z-10 px-5 pt-20 pb-4 bg-linear-to-b from-[#050505] via-[#050505]/90 to-transparent">
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-[9px] font-mono text-[#00FF88]">
-              {SERVICES[activeIndex].index}
-            </span>
-            <div className="w-5 h-px bg-[#00FF88]/50" />
-            <span className="text-[9px] uppercase tracking-widest text-neutral-500">
-              {SERVICES[activeIndex].category}
-            </span>
-          </div>
-          <h3 className="text-2xl font-black italic uppercase tracking-tighter text-white leading-none">
-            {SERVICES[activeIndex].title}
-          </h3>
-          <p className="text-[10px] text-[#00FF88] uppercase tracking-widest mt-1">
-            {SERVICES[activeIndex].subtitle}
-          </p>
-        </div>
-        <div className="relative flex-1">
-          {SERVICES.map((service, i) => {
-            const sectionStart = TIMELINE.split.enterEnd + i * PER_SERVICE;
-            const sectionEnd = sectionStart + PER_SERVICE;
-            return (
-              <ServiceVisualCard
-                key={service.index}
-                service={service}
-                progress={progress}
-                sectionStart={sectionStart}
-                sectionEnd={sectionEnd}
-                totalServices={TOTAL_SERVICES}
-              />
-            );
-          })}
-        </div>
-      </div>
-
-      {/* ── Divider ── */}
-      <div className="absolute top-0 left-1/2 w-px h-full bg-white/4 hidden md:block" />
-    </motion.div>
+    <div className="absolute right-6 top-1/2 -translate-y-1/2 flex flex-col gap-2.5 z-10">
+      {SERVICES.map((_, i) => (
+        <motion.button
+          key={i}
+          className="w-0.5 rounded-full"
+          animate={{
+            height: i === active ? 28 : 6,
+            backgroundColor: i === active ? "#00FF88" : "#2a2a2a",
+          }}
+          transition={{ duration: 0.35, ease: cinematicEase }}
+          onClick={() => {
+            const el = trackRef.current;
+            if (!el) return;
+            el.scrollTo({ left: i * el.clientWidth, behavior: "smooth" });
+          }}
+        />
+      ))}
+    </div>
   );
 }
 
-// ─── MAIN EXPORT ──────────────────────────────────────────────────────────────
-// Receives pre-smoothed MotionValue<number> from HomeScreen.
-// No useScroll, no containerRef, no tall container — just absolute inset-0.
-// SplitSection and everything inside is unchanged — it already consumes a
-// MotionValue<number> so it just works.
-export function MyServices({ progress }: { progress: MotionValue<number> }) {
+// ─── SCROLL HINT ──────────────────────────────────────────────────────────────
+function ScrollHint({
+  trackRef,
+}: {
+  trackRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const [showLeft, setShowLeft] = React.useState(false);
+  const [showRight, setShowRight] = React.useState(true);
+
+  useEffect(() => {
+    const el = trackRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      setShowLeft(el.scrollLeft > 20);
+      setShowRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 20);
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [trackRef]);
+
   return (
-    <div className="absolute inset-0">
-      <SplitSection progress={progress} />
+    <>
+      <motion.button
+        className="absolute left-4 top-1/2 -translate-y-1/2 z-20 text-[#00FF88]/50 hover:text-[#00FF88] transition-colors duration-300 text-xl"
+        animate={{
+          opacity: showLeft ? 1 : 0,
+          pointerEvents: showLeft ? "auto" : "none",
+        }}
+        onClick={() => {
+          const el = trackRef.current;
+          if (!el) return;
+          const currentIndex = Math.round(el.scrollLeft / el.clientWidth);
+          el.scrollTo({
+            left: Math.max(0, currentIndex - 1) * el.clientWidth,
+            behavior: "smooth",
+          });
+        }}
+      >
+        ←
+      </motion.button>
+
+      <motion.button
+        className="absolute right-14 top-1/2 -translate-y-1/2 z-20 text-[#00FF88]/50 hover:text-[#00FF88] transition-colors duration-300 text-xl"
+        animate={{
+          opacity: showRight ? 1 : 0,
+          pointerEvents: showRight ? "auto" : "none",
+        }}
+        onClick={() => {
+          const el = trackRef.current;
+          if (!el) return;
+          const currentIndex = Math.round(el.scrollLeft / el.clientWidth);
+          el.scrollTo({
+            left:
+              Math.min(TOTAL - 1, currentIndex + 1) * el.clientWidth,
+            behavior: "smooth",
+          });
+        }}
+      >
+        →
+      </motion.button>
+    </>
+  );
+}
+
+// ─── PROGRESS BAR ─────────────────────────────────────────────────────────────
+function HorizontalProgressBar({
+  trackRef,
+}: {
+  trackRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const barRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = trackRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const progress = el.scrollLeft / (el.scrollWidth - el.clientWidth);
+      if (barRef.current)
+        barRef.current.style.width = `${progress * 100}%`;
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [trackRef]);
+
+  return (
+    <div className="absolute bottom-0 left-0 w-full h-px bg-white/5 z-10">
+      <div
+        ref={barRef}
+        className="h-full bg-[#00FF88] transition-none"
+        style={{ width: "0%" }}
+      />
+    </div>
+  );
+}
+
+// ─── SERVICES SECTION ─────────────────────────────────────────────────────────
+export function MyServices({ isActive, seekTo }: MyServicesProps) {
+  const trackRef = useRef<HTMLDivElement>(null);
+
+  useServiceWheelRedirect({
+    isActive,
+    trackRef,
+    onExitRight: () => seekTo(0.58),
+    onExitLeft: () => seekTo(0.16),
+  });
+
+  return (
+    <div className="absolute inset-0 bg-[#050505] overflow-hidden">
+      {/* Horizontal scroll track — no CSS snap, we own snapping in the hook */}
+      <div
+        ref={trackRef}
+        className="flex h-full overflow-x-scroll overflow-y-hidden"
+        style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
+      >
+        {SERVICES.map((_, i) => (
+          <div key={i} className="shrink-0 w-screen h-full">
+            <ServiceCard cardIndex={i} trackRef={trackRef} />
+          </div>
+        ))}
+      </div>
+
+      {/* "What I Offer" eyebrow — fixed inside panel */}
+      <div className="absolute top-[10%] left-10 pointer-events-none z-10">
+        <span className="text-[13px] uppercase font-mono tracking-[0.3em] text-[#00FF88] font-medium">
+          What I Offer
+        </span>
+      </div>
+
+      <DotNavigator trackRef={trackRef} />
+      <ScrollHint trackRef={trackRef} />
+      <HorizontalProgressBar trackRef={trackRef} />
     </div>
   );
 }

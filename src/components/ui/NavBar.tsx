@@ -17,7 +17,7 @@ export function Navbar({ isVisible }: { isVisible: boolean }) {
     <>
       {/* Fixed Header: We tie opacity to the isVisible prop so it fades in after the hero animation */}
       <header
-        className={`fixed top-0 left-0 w-full z-50 flex justify-between items-center p-8 mix-blend-difference text-white transition-opacity duration-1000 delay-500`}
+        className={`fixed top-0 left-0 w-full z-50 flex justify-between items-center p-8 mix-blend-difference text-white transition-opacity duration-1000 delay-500 `}
       >
         <h1
           className={`text-lg font-semibold tracking-tight ${isVisible ? "translate-y-0" : "-translate-y-20 "} transition-transform duration-500`}
@@ -45,7 +45,7 @@ export function Navbar({ isVisible }: { isVisible: boolean }) {
               y: "-100%",
               transition: { delay: 1.1, duration: 0.8, ease: cinematicEase },
             }}
-            className="fixed inset-0 bg-[#0f0f0f] z-40 flex flex-col justify-center px-10 md:px-32 lg:px-48"
+            className="fixed inset-0 bg-[#212121] z-40 flex flex-col justify-center px-10 md:px-32 lg:px-48"
           >
             {/* Main Menu Links */}
             <div className="flex flex-col items-start gap-2">

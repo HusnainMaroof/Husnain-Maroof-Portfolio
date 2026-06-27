@@ -135,7 +135,7 @@ export function HeroSection({
       </div>
 
       {/* PHASE 2+: EXPANDING BACKGROUND */}
-      <div className="absolute inset-0 flex items-center justify-center z-10 bg-gray-900/50">
+      <div className="absolute inset-0 flex items-center justify-center z-10 bg-[#212121] ">
         {phase >= 2 && (
           <motion.div
             className="relative flex items-center justify-center overflow-hidden bg-[#050505]"
@@ -194,7 +194,7 @@ export function HeroSection({
               <span>👋</span>
               <span>HI, MY NAME IS</span>
             </p>
-            <h2 className="text-3xl md:text-5xl lg:text-6xl font-display font-black italic uppercase leading-[0.9]">
+            <h2 className="text-3xl md:text-5xl lg:text-6xl  font-black italic uppercase leading-[0.9]">
               <span className="block text-primary">
                 <AnimatedText text="HUSNAIN" startReveal={true} color="#00FF88" />
               </span>
