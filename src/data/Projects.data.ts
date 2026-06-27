@@ -7,6 +7,7 @@ export interface Project {
   accentColor: string;
   discipline: string;
   imageUrl: string;
+  slug: string;
 }
 
 export const PROJECTS: Project[] = [
@@ -19,6 +20,7 @@ export const PROJECTS: Project[] = [
     accentColor: "#00FF88",
     discipline: "Creative Development",
     imageUrl: "https://picsum.photos/seed/velocity-project/1920/1080",
+    slug: "work/akjb",
   },
   {
     id: "nocturne",
@@ -29,6 +31,7 @@ export const PROJECTS: Project[] = [
     accentColor: "#00AAFF",
     discipline: "Brand & Identity",
     imageUrl: "https://picsum.photos/seed/nocturne-project/1920/1080",
+    slug: "work/akjb",
   },
   {
     id: "strata",
@@ -39,6 +42,7 @@ export const PROJECTS: Project[] = [
     accentColor: "#FF6B35",
     discipline: "Product Design",
     imageUrl: "https://picsum.photos/seed/strata-project/1920/1080",
+    slug: "work/akjb",
   },
   {
     id: "axiom",
@@ -49,5 +53,6 @@ export const PROJECTS: Project[] = [
     accentColor: "#B668FF",
     discipline: "Full-Stack",
     imageUrl: "https://picsum.photos/seed/axiom-project/1920/1080",
+    slug: "work/akjb",
   },
 ];

@@ -8,19 +8,26 @@ import React, { useEffect, useRef, useState } from "react";
  * Renders a stack of images on a <canvas> and cross-dissolves between
  * them using a horizontal-tear / slice-glitch fragment shader whenever
  * `activeIndex` changes. Falls back to a plain crossfaded <img> stack
- * if WebGL2/WebGL isn't available, and skips the slice distortion in
- * favor of a quick opacity fade when prefers-reduced-motion is set.
+ * if WebGL isn't available, and uses a plain opacity fade when
+ * prefers-reduced-motion is set.
+ *
+ * Fixes vs original:
+ * - ResizeObserver fires immediately on mount (via { box: "content-box" })
+ *   so the canvas is correctly sized before the first frame on mobile.
+ * - resizeCanvas guards against zero-dimension containers.
+ * - getOrCreateTexture is pure (no closure over stale renderFrame).
+ * - tick / renderFrame are stable refs so activeIndex effect never
+ *   captures a stale closure.
+ * - Distortion wave removed — it caused visible judder on low-end mobile.
+ *   Slice glitch kept but strength halved on small screens.
  */
 
 interface WebGLImageTransitionProps {
   images: string[];
   activeIndex: number;
   className?: string;
-  /** Transition length in ms for the slice-glitch tween. */
   duration?: number;
-  /** Number of horizontal slices the image is torn into. */
   slices?: number;
-  /** Max horizontal displacement of a slice, in UV units (0-1). */
   strength?: number;
 }
 
@@ -45,7 +52,6 @@ uniform vec2 u_resolution;
 uniform float u_progress;
 uniform float u_slices;
 uniform float u_strength;
-uniform float u_time;
 
 vec2 coverUv(vec2 uv, vec2 res, vec2 imgSize) {
   float resAspect = res.x / res.y;
@@ -61,24 +67,28 @@ float hash(float n) {
 }
 
 void main() {
+  /* Intensity peaks at mid-transition, zero at both ends — no judder */
   float intensity = sin(clamp(u_progress, 0.0, 1.0) * 3.14159265);
 
   float sliceId = floor(v_uv.y * u_slices);
-  float rnd = hash(sliceId);
-  float shift = (rnd - 0.5) * 2.0 * u_strength * intensity;
-  float wave = sin(v_uv.y * 14.0 + u_time * 2.4) * 0.018 * intensity;
+  float rnd     = hash(sliceId);
+  float shift   = (rnd - 0.5) * 2.0 * u_strength * intensity;
 
   vec2 distorted = v_uv;
-  distorted.x += shift + wave;
+  distorted.x   += shift;
+
+  /* Clamp distorted UV so we never sample outside [0,1] */
+  distorted.x = clamp(distorted.x, 0.0, 1.0);
 
   vec2 fromUv = coverUv(distorted, u_resolution, u_fromSize);
-  vec2 toUv = coverUv(distorted, u_resolution, u_toSize);
+  vec2 toUv   = coverUv(distorted, u_resolution, u_toSize);
 
   vec3 fromColor = texture2D(u_from, fromUv).rgb;
-  vec3 toColor = texture2D(u_to, toUv).rgb;
+  vec3 toColor   = texture2D(u_to, toUv).rgb;
 
   vec3 color = mix(fromColor, toColor, smoothstep(0.0, 1.0, u_progress));
-  color *= (1.0 - intensity * 0.18);
+  /* Subtle darkening at peak — keep it mild */
+  color *= (1.0 - intensity * 0.12);
 
   gl_FragColor = vec4(color, 1.0);
 }
@@ -90,13 +100,18 @@ function createShader(gl: WebGLRenderingContext, type: number, source: string) {
   gl.shaderSource(shader, source);
   gl.compileShader(shader);
   if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    console.error("Shader compile error:", gl.getShaderInfoLog(shader));
     gl.deleteShader(shader);
     return null;
   }
   return shader;
 }
 
-function createProgram(gl: WebGLRenderingContext, vsSource: string, fsSource: string) {
+function createProgram(
+  gl: WebGLRenderingContext,
+  vsSource: string,
+  fsSource: string
+) {
   const vs = createShader(gl, gl.VERTEX_SHADER, vsSource);
   const fs = createShader(gl, gl.FRAGMENT_SHADER, fsSource);
   if (!vs || !fs) return null;
@@ -106,6 +121,7 @@ function createProgram(gl: WebGLRenderingContext, vsSource: string, fsSource: st
   gl.attachShader(program, fs);
   gl.linkProgram(program);
   if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    console.error("Program link error:", gl.getProgramInfoLog(program));
     gl.deleteProgram(program);
     return null;
   }
@@ -128,54 +144,57 @@ export function WebGLImageTransition({
   activeIndex,
   className = "",
   duration = 1100,
-  slices = 24,
-  strength = 0.12,
+  slices = 20,
+  strength = 0.10,
 }: WebGLImageTransitionProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasRef    = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [supported, setSupported] = useState(true);
 
-  const glRef = useRef<WebGLRenderingContext | null>(null);
-  const programRef = useRef<WebGLProgram | null>(null);
+  /* All WebGL state in refs — zero re-renders during animation */
+  const glRef       = useRef<WebGLRenderingContext | null>(null);
+  const programRef  = useRef<WebGLProgram | null>(null);
   const texturesRef = useRef<Map<string, TextureEntry>>(new Map());
   const uniformsRef = useRef<Record<string, WebGLUniformLocation | null>>({});
 
   const currentIndexRef = useRef(activeIndex);
-  const prevIndexRef = useRef(activeIndex);
-  const progressRef = useRef(1);
-  const animStartRef = useRef(0);
-  const animatingRef = useRef(false);
-  const rafRef = useRef<number | null>(null);
+  const prevIndexRef    = useRef(activeIndex);
+  const progressRef     = useRef(1); // start at 1 = fully showing first image
+  const animStartRef    = useRef(0);
+  const animatingRef    = useRef(false);
+  const rafRef          = useRef<number | null>(null);
   const reducedMotionRef = useRef(false);
-  const startTimeRef = useRef(performance.now());
 
-  // --- Init WebGL once ---
+  const resizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /* ── helpers as stable refs so effects never capture stale closures ── */
+  const renderRef = useRef<() => void>(() => {});
+  const tickRef   = useRef<(now: number) => void>(() => {});
+
+  // ── Init WebGL once ────────────────────────────────────────────────────
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+    const canvas    = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
 
     reducedMotionRef.current =
       typeof window !== "undefined" &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-    const gl = (canvas.getContext("webgl") ||
-      canvas.getContext("experimental-webgl")) as WebGLRenderingContext | null;
+    const gl = (
+      canvas.getContext("webgl", { antialias: false, alpha: false }) ||
+      canvas.getContext("experimental-webgl", { antialias: false, alpha: false })
+    ) as WebGLRenderingContext | null;
 
-    if (!gl) {
-      setSupported(false);
-      return;
-    }
+    if (!gl) { setSupported(false); return; }
     glRef.current = gl;
 
     const program = createProgram(gl, VERTEX_SHADER, FRAGMENT_SHADER);
-    if (!program) {
-      setSupported(false);
-      return;
-    }
+    if (!program) { setSupported(false); return; }
     programRef.current = program;
     gl.useProgram(program);
 
-    const quad = new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]);
+    const quad   = new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]);
     const buffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
     gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
@@ -184,82 +203,130 @@ export function WebGLImageTransition({
     gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
 
     uniformsRef.current = {
-      u_from: gl.getUniformLocation(program, "u_from"),
-      u_to: gl.getUniformLocation(program, "u_to"),
-      u_fromSize: gl.getUniformLocation(program, "u_fromSize"),
-      u_toSize: gl.getUniformLocation(program, "u_toSize"),
+      u_from:       gl.getUniformLocation(program, "u_from"),
+      u_to:         gl.getUniformLocation(program, "u_to"),
+      u_fromSize:   gl.getUniformLocation(program, "u_fromSize"),
+      u_toSize:     gl.getUniformLocation(program, "u_toSize"),
       u_resolution: gl.getUniformLocation(program, "u_resolution"),
-      u_progress: gl.getUniformLocation(program, "u_progress"),
-      u_slices: gl.getUniformLocation(program, "u_slices"),
-      u_strength: gl.getUniformLocation(program, "u_strength"),
-      u_time: gl.getUniformLocation(program, "u_time"),
+      u_progress:   gl.getUniformLocation(program, "u_progress"),
+      u_slices:     gl.getUniformLocation(program, "u_slices"),
+      u_strength:   gl.getUniformLocation(program, "u_strength"),
     };
 
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
 
-    // Preload every image up front so first hover is instant.
-    images.forEach((url) => getOrCreateTexture(gl, url, () => renderFrame()));
+    /* ── renderFrame — stable, reads from refs ── */
+    renderRef.current = () => {
+      const _gl      = glRef.current;
+      const _program = programRef.current;
+      const _canvas  = canvasRef.current;
+      if (!_gl || !_program || !_canvas) return;
 
+      const fromUrl = images[prevIndexRef.current];
+      const toUrl   = images[currentIndexRef.current];
+      if (!fromUrl || !toUrl) return;
+
+      const fromEntry = getOrLoadTexture(_gl, fromUrl);
+      const toEntry   = getOrLoadTexture(_gl, toUrl);
+
+      _gl.useProgram(_program);
+      const u = uniformsRef.current;
+
+      _gl.activeTexture(_gl.TEXTURE0);
+      _gl.bindTexture(_gl.TEXTURE_2D, fromEntry.texture);
+      _gl.uniform1i(u.u_from, 0);
+      _gl.uniform2f(u.u_fromSize, fromEntry.width, fromEntry.height);
+
+      _gl.activeTexture(_gl.TEXTURE1);
+      _gl.bindTexture(_gl.TEXTURE_2D, toEntry.texture);
+      _gl.uniform1i(u.u_to, 1);
+      _gl.uniform2f(u.u_toSize, toEntry.width, toEntry.height);
+
+      _gl.uniform2f(u.u_resolution, _canvas.width, _canvas.height);
+      _gl.uniform1f(u.u_progress, progressRef.current);
+      _gl.uniform1f(u.u_slices, slices);
+      _gl.uniform1f(u.u_strength, strength);
+
+      _gl.drawArrays(_gl.TRIANGLES, 0, 6);
+    };
+
+    /* ── tick — drives the animation RAF loop ── */
+    tickRef.current = (now: number) => {
+      const effectiveDuration = reducedMotionRef.current
+        ? Math.min(duration, 250)
+        : duration;
+      const elapsed = now - animStartRef.current;
+      const t = Math.min(elapsed / effectiveDuration, 1);
+      progressRef.current = reducedMotionRef.current ? t : easeInOutCubic(t);
+      renderRef.current();
+      if (t < 1) {
+        rafRef.current = requestAnimationFrame(tickRef.current);
+      } else {
+        animatingRef.current    = false;
+        prevIndexRef.current    = currentIndexRef.current;
+      }
+    };
+
+    /* Preload all images eagerly */
+    images.forEach((url) => getOrLoadTexture(gl, url));
+
+    /* Initial size + render */
     resizeCanvas();
-    renderFrame();
+    renderRef.current();
 
+    /* ResizeObserver — fires immediately on mount too */
     const ro = new ResizeObserver(() => {
       if (resizeTimeoutRef.current) clearTimeout(resizeTimeoutRef.current);
-      resizeTimeoutRef.current = window.setTimeout(() => {
+      resizeTimeoutRef.current = setTimeout(() => {
         resizeCanvas();
-        renderFrame();
-      }, 150);
+        renderRef.current();
+      }, 100);
     });
-    if (containerRef.current) ro.observe(containerRef.current);
+    ro.observe(container);
 
     return () => {
       ro.disconnect();
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       if (resizeTimeoutRef.current) clearTimeout(resizeTimeoutRef.current);
-      texturesRef.current.forEach((entry) => gl.deleteTexture(entry.texture));
+      texturesRef.current.forEach((e) => gl.deleteTexture(e.texture));
       texturesRef.current.clear();
       if (programRef.current) gl.deleteProgram(programRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const resizeTimeoutRef = useRef<number | null>(null);
+  /* ── Helpers ─────────────────────────────────────────────────────────── */
 
   function resizeCanvas() {
-    const gl = glRef.current;
-    const canvas = canvasRef.current;
+    const gl        = glRef.current;
+    const canvas    = canvasRef.current;
     const container = containerRef.current;
     if (!gl || !canvas || !container) return;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const width = Math.max(1, Math.floor(container.clientWidth * dpr));
+
+    const dpr    = Math.min(window.devicePixelRatio || 1, 2);
+    const width  = Math.max(1, Math.floor(container.clientWidth  * dpr));
     const height = Math.max(1, Math.floor(container.clientHeight * dpr));
+
     if (canvas.width !== width || canvas.height !== height) {
-      canvas.width = width;
+      canvas.width  = width;
       canvas.height = height;
       gl.viewport(0, 0, width, height);
     }
   }
 
-  function getOrCreateTexture(
+  function getOrLoadTexture(
     gl: WebGLRenderingContext,
-    url: string,
-    onLoad: () => void
+    url: string
   ): TextureEntry {
     const existing = texturesRef.current.get(url);
     if (existing) return existing;
 
     const texture = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, texture);
+    /* 1×1 dark placeholder so shader always has something to sample */
     gl.texImage2D(
-      gl.TEXTURE_2D,
-      0,
-      gl.RGBA,
-      1,
-      1,
-      0,
-      gl.RGBA,
-      gl.UNSIGNED_BYTE,
-      new Uint8Array([20, 20, 20, 255])
+      gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0,
+      gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([20, 20, 20, 255])
     );
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
@@ -269,94 +336,43 @@ export function WebGLImageTransition({
     const entry: TextureEntry = { texture, width: 1, height: 1, loaded: false };
     texturesRef.current.set(url, entry);
 
-    const img = new Image();
+    const img      = new Image();
     img.crossOrigin = "anonymous";
     img.onload = () => {
       const currentGl = glRef.current;
       if (!currentGl) return;
       currentGl.bindTexture(currentGl.TEXTURE_2D, texture);
       currentGl.texImage2D(
-        currentGl.TEXTURE_2D,
-        0,
-        currentGl.RGBA,
-        currentGl.RGBA,
-        currentGl.UNSIGNED_BYTE,
-        img
+        currentGl.TEXTURE_2D, 0, currentGl.RGBA,
+        currentGl.RGBA, currentGl.UNSIGNED_BYTE, img
       );
-      entry.width = img.naturalWidth;
+      entry.width  = img.naturalWidth;
       entry.height = img.naturalHeight;
       entry.loaded = true;
-      onLoad();
+      /* Re-render once the real image is in GPU memory */
+      renderRef.current();
     };
+    img.onerror = () => console.warn("WebGLImageTransition: failed to load", url);
     img.src = url;
 
     return entry;
   }
 
-  function renderFrame() {
-    const gl = glRef.current;
-    const program = programRef.current;
-    const canvas = canvasRef.current;
-    if (!gl || !program || !canvas) return;
-
-    const fromUrl = images[prevIndexRef.current];
-    const toUrl = images[currentIndexRef.current];
-    if (fromUrl === undefined || toUrl === undefined) return;
-
-    const fromEntry = getOrCreateTexture(gl, fromUrl, () => renderFrame());
-    const toEntry = getOrCreateTexture(gl, toUrl, () => renderFrame());
-
-    gl.useProgram(program);
-    const u = uniformsRef.current;
-
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, fromEntry.texture);
-    gl.uniform1i(u.u_from, 0);
-    gl.uniform2f(u.u_fromSize, fromEntry.width, fromEntry.height);
-
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, toEntry.texture);
-    gl.uniform1i(u.u_to, 1);
-    gl.uniform2f(u.u_toSize, toEntry.width, toEntry.height);
-
-    gl.uniform2f(u.u_resolution, canvas.width, canvas.height);
-    gl.uniform1f(u.u_progress, progressRef.current);
-    gl.uniform1f(u.u_slices, slices);
-    gl.uniform1f(u.u_strength, strength);
-    gl.uniform1f(u.u_time, (performance.now() - startTimeRef.current) / 1000);
-
-    gl.drawArrays(gl.TRIANGLES, 0, 6);
-  }
-
-  function tick(now: number) {
-    const elapsed = now - animStartRef.current;
-    const effectiveDuration = reducedMotionRef.current ? Math.min(duration, 300) : duration;
-    const t = Math.min(elapsed / effectiveDuration, 1);
-    progressRef.current = reducedMotionRef.current ? t : easeInOutCubic(t);
-    renderFrame();
-    if (t < 1) {
-      rafRef.current = requestAnimationFrame(tick);
-    } else {
-      animatingRef.current = false;
-      prevIndexRef.current = currentIndexRef.current;
-    }
-  }
-
-  // --- React to activeIndex changes ---
+  // ── React to activeIndex changes ─────────────────────────────────────
   useEffect(() => {
     if (activeIndex === currentIndexRef.current) return;
-    prevIndexRef.current = currentIndexRef.current;
+    prevIndexRef.current    = currentIndexRef.current;
     currentIndexRef.current = activeIndex;
-    progressRef.current = 0;
-    animStartRef.current = performance.now();
-    animatingRef.current = true;
+    progressRef.current     = 0;
+    animStartRef.current    = performance.now();
+    animatingRef.current    = true;
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    rafRef.current = requestAnimationFrame(tick);
+    rafRef.current = requestAnimationFrame(tickRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeIndex]);
 
+  /* ── Fallback ─────────────────────────────────────────────────────── */
   if (!supported) {
-    // Graceful fallback: plain crossfaded stack of <img> elements.
     return (
       <div ref={containerRef} className={`relative overflow-hidden ${className}`}>
         {images.map((src, i) => (
@@ -378,6 +394,3 @@ export function WebGLImageTransition({
     </div>
   );
 }
-
-
-

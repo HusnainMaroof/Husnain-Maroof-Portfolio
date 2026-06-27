@@ -1,5 +1,5 @@
 "use client";
-import React, { useRef, useState } from "react";
+import React, { useRef, useState, useEffect, useCallback } from "react";
 import { motion, useInView } from "framer-motion";
 import { AnimatedText } from "./TextAnimation"; // Adjust path as needed
 
@@ -7,17 +7,21 @@ const cinematicEase: [number, number, number, number] = [0.76, 0, 0.24, 1];
 
 export function Footer() {
   const footerRef = useRef<HTMLElement>(null);
-  const isInView = useInView(footerRef, { once: true, margin: "-10%" });
+  const isInView = useInView(footerRef, { once: false, margin: "-10%" });
 
-  // Track when text should start revealing
+  // revealed drives AnimatedText — toggled on every entry, cleared on every exit
   const [revealed, setRevealed] = useState(false);
 
-  // Trigger reveal when footer comes into view
-  React.useEffect(() => {
-    if (isInView && !revealed) {
-      setRevealed(true);
+  useEffect(() => {
+    if (isInView) {
+      // Small delay lets the slide-up spring settle before the wipe fires
+      const id = setTimeout(() => setRevealed(true), 120);
+      return () => clearTimeout(id);
+    } else {
+      // Reset immediately so next entry re-runs the wipe from scratch
+      setRevealed(false);
     }
-  }, [isInView, revealed]);
+  }, [isInView]);
 
   return (
     <footer
@@ -187,19 +191,6 @@ export function Footer() {
             Resume
           </a>
         </div>
-        {/* <button
-          onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-          className="flex items-center gap-2 text-[9px] md:text-[10px] uppercase tracking-[0.25em] text-[#00FF88] font-mono hover:text-white transition-colors duration-300 group"
-        >
-          <motion.span
-            className="inline-block"
-            animate={{ y: [0, -3, 0] }}
-            transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
-          >
-            ↑
-          </motion.span>
-          Back to top
-        </button> */}
       </motion.div>
     </footer>
   );

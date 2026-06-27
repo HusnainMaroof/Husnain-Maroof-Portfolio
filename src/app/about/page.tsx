@@ -1,5 +1,5 @@
-import AboutMe from "@/src/components/ui/about/About";
-import StackShowcase from "@/src/components/ui/MyStack";
+
+import BioText from "@/src/components/ui/HeroText";
 import React from "react";
 
 const page = () => {
@@ -7,7 +7,7 @@ const page = () => {
     <div className="w-full h-screen ">
       {" "}
       {/* <AboutMe /> */}
-      <StackShowcase />
+      <BioText/>
     </div>
   );
 };

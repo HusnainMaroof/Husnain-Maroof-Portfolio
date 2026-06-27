@@ -9,10 +9,11 @@ import {
 import { AnimatedText, ExitWipeCharacter } from "./TextAnimation";
 import { InteractiveAsciiPortrait } from "../asci art/InteractiveAsciiPortrait";
 import { TitleSlide } from "./TitleSlide";
+import BioText from "./HeroText";
 
 const cinematicEase: [number, number, number, number] = [0.76, 0, 0.24, 1];
 
-const TITLE_FADE_IN_START = 0.5;
+const TITLE_FADE_IN_START = 0.3;
 const TITLE_FADE_IN_END   = 0.6;
 const TITLE_HOLD_END      = 0.92;
 const TITLE_FADE_OUT_END  = 0.98;
@@ -179,6 +180,7 @@ export function HeroSection({
           className="absolute inset-0 z-20"
         >
           <TitleSlide revealed={revealed} />
+          <BioText/>
         </motion.div>
       )}
 
@@ -194,7 +196,7 @@ export function HeroSection({
               <span>👋</span>
               <span>HI, MY NAME IS</span>
             </p>
-            <h2 className="text-3xl md:text-5xl lg:text-6xl  font-black italic uppercase leading-[0.9]">
+            <h2 className="text-3xl md:text-5xl lg:text-6xl font-display font-black italic uppercase leading-[0.9]">
               <span className="block text-primary">
                 <AnimatedText text="HUSNAIN" startReveal={true} color="#00FF88" />
               </span>
