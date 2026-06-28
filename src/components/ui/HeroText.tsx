@@ -1,290 +1,205 @@
 "use client";
-import React, { useEffect, useRef, useMemo, ReactNode, RefObject } from "react";
-import { gsap } from "gsap";
-import { ScrollTrigger } from "gsap/ScrollTrigger";
+import React, { useEffect, useMemo, useRef } from "react";
+import { motion, useAnimation } from "framer-motion";
 import { AnimatedText } from "./TextAnimation";
 
-gsap.registerPlugin(ScrollTrigger);
+// ─────────────────────────────────────────────
+// WORD REVEAL
+// One-shot stagger that fires when `revealed` flips true.
+// Resets instantly when `revealed` flips false so re-entry replays cleanly.
+// No GSAP, no ScrollTrigger, no scroll container ref needed.
+// ─────────────────────────────────────────────
 
-// ─────────────────────────────────────────────
-// SCROLL REVEAL
-// ─────────────────────────────────────────────
-interface ScrollRevealProps {
-  children: ReactNode;
-  scrollContainerRef?: RefObject<HTMLElement>;
-  enableBlur?: boolean;
-  baseOpacity?: number;
-  baseRotation?: number;
-  blurStrength?: number;
-  containerClassName?: string;
-  textClassName?: string;
-  rotationEnd?: string;
-  wordAnimationEnd?: string;
+interface WordRevealProps {
+  children: string;
+  revealed: boolean;
+  className?: string;
+  /** Base delay before the first word starts (seconds) */
+  startDelay?: number;
+  /** Stagger between each word (seconds) */
+  stagger?: number;
 }
 
-function ScrollReveal({
+function WordReveal({
   children,
-  scrollContainerRef,
-  enableBlur = true,
-  baseOpacity = 0.25,
-  baseRotation = 3,
-  blurStrength = 4,
-  containerClassName = "",
-  textClassName = "",
-  rotationEnd = "bottom bottom",
-  wordAnimationEnd = "bottom center",
-}: ScrollRevealProps) {
-  const containerRef = useRef<HTMLHeadingElement>(null);
-
-  const splitText = useMemo(() => {
-    const text = typeof children === "string" ? children : "";
-    return text.split(/(\s+)/).map((word, index) => {
-      if (word.match(/^\s+$/)) return word;
-      return (
-        <span className="inline-block word" key={index}>
-          {word}
-        </span>
-      );
-    });
-  }, [children]);
-
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-
-    const scroller =
-      scrollContainerRef?.current ? scrollContainerRef.current : window;
-
-    // Use gsap.matchMedia so triggers are built with the correct
-    // start points for the active breakpoint — and rebuilt on resize.
-    const mm = gsap.matchMedia();
-
-    mm.add(
-      {
-        isMobile: "(max-width: 767px)",
-        isDesktop: "(min-width: 768px)",
-      },
-      (context) => {
-        const { isMobile } = context.conditions as { isMobile: boolean };
-
-        const opacityStart  = isMobile ? "top 85%" : "top 50%";
-        const blurStart     = isMobile ? "top 85%" : "top 65%";
-        const opacityEnd    = isMobile ? "bottom 15%" : wordAnimationEnd;
-        const blurEnd       = isMobile ? "bottom 15%" : wordAnimationEnd;
-
-        gsap.fromTo(
-          el,
-          { transformOrigin: "0% 50%", rotate: baseRotation },
-          {
-            ease: "none",
-            rotate: 0,
-            scrollTrigger: {
-              trigger: el,
-              scroller,
-              start: "top bottom",
-              end: rotationEnd,
-              scrub: true,
-            },
-          }
-        );
-
-        const wordElements = el.querySelectorAll<HTMLElement>(".word");
-
-        gsap.fromTo(
-          wordElements,
-          { opacity: baseOpacity, willChange: "opacity" },
-          {
-            ease: "none",
-            opacity: 1,
-            stagger: 0.05,
-            scrollTrigger: {
-              trigger: el,
-              scroller,
-              start: opacityStart,
-              end: opacityEnd,
-              scrub: true,
-            },
-          }
-        );
-
-        if (enableBlur) {
-          gsap.fromTo(
-            wordElements,
-            { filter: `blur(${blurStrength}px)` },
-            {
-              ease: "none",
-              filter: "blur(0px)",
-              stagger: 0.05,
-              scrollTrigger: {
-                trigger: el,
-                scroller,
-                start: blurStart,
-                end: blurEnd,
-                scrub: true,
-              },
-            }
-          );
-        }
-      }
-    );
-
-    return () => mm.revert();
-  }, [
-    scrollContainerRef,
-    enableBlur,
-    baseRotation,
-    baseOpacity,
-    rotationEnd,
-    wordAnimationEnd,
-    blurStrength,
-  ]);
+  revealed,
+  className = "",
+  startDelay = 0,
+  stagger = 0.04,
+}: WordRevealProps) {
+  const words = useMemo(
+    () => children.split(/(\s+)/).filter((w) => w.trim().length > 0),
+    [children],
+  );
 
   return (
-    <h2 ref={containerRef} className={`my-5 ${containerClassName}`}>
-      <p className={textClassName}>{splitText}</p>
-    </h2>
+    <p className={className}>
+      {words.map((word, i) => (
+        <motion.span
+          key={i}
+          className="inline-block mr-[0.28em]"
+          initial={{ opacity: 0, y: 10, filter: "blur(6px)" }}
+          animate={
+            revealed
+              ? { opacity: 1, y: 0, filter: "blur(0px)" }
+              : { opacity: 0, y: 10, filter: "blur(6px)" }
+          }
+          transition={
+            revealed
+              ? {
+                  duration: 0.5,
+                  ease: [0.25, 0.1, 0.25, 1],
+                  delay: startDelay + i * stagger,
+                }
+              : { duration: 0 } // instant reset so re-entry replays
+          }
+        >
+          {word}
+        </motion.span>
+      ))}
+    </p>
   );
 }
 
 // ─────────────────────────────────────────────
-// BIO SECTION
+// BIO TEXT
+// Purely presentational. Parent (HeroSection) owns all scroll logic
+// and passes a single `revealed` boolean — flipped once on entry,
+// once on exit. Zero scroll logic lives here.
 // ─────────────────────────────────────────────
-export default function BioText() {
-  const [startReveal, setStartReveal] = React.useState(false);
+
+interface BioTextProps {
+  revealed: boolean;
+}
+
+export default function BioText({ revealed }: BioTextProps) {
+  // Name AnimatedText fires on mount — keep it always revealed
+  // so the left panel name wipe plays when bio first appears.
+  const [nameReveal, setNameReveal] = React.useState(false);
+  const firedRef = useRef(false);
 
   useEffect(() => {
-    const t = setTimeout(() => setStartReveal(true), 300);
-    return () => clearTimeout(t);
-  }, []);
+    if (revealed && !firedRef.current) {
+      firedRef.current = true;
+      setNameReveal(true);
+    }
+    // Reset when hidden so re-entry replays
+    if (!revealed) {
+      firedRef.current = false;
+      setNameReveal(false);
+    }
+  }, [revealed]);
 
   return (
-    <>
-      <style>{`
-        /* left col: sticky on desktop, static on mobile */
-        .bio-left {
-          position: sticky;
-          top: 0;
-          height: 100vh;
-          display: flex;
-          flex-direction: column;
-          justify-content: center;
-          padding: 4rem 0;
-        }
+    <div className="w-full h-full text-white font-sans">
+      <div className="max-w-275 mx-auto px-6 md:px-10 h-full flex items-center">
+        {/*
+          Mobile:  single column, centred
+          Desktop: two-column — left sticky name panel, right bio paragraphs
+        */}
+        <div
+          className="
+            w-full
+            flex flex-col gap-10
+            md:grid md:grid-cols-[1fr_1.15fr] md:gap-x-28
+            items-center md:items-start
+          "
+        >
+          {/* ── LEFT: name panel ── */}
+          <motion.div
+            initial={{ opacity: 0, x: -20 }}
+            animate={revealed ? { opacity: 1, x: 0 } : { opacity: 0, x: -20 }}
+            transition={
+              revealed
+                ? { duration: 0.7, ease: [0.25, 0.1, 0.25, 1], delay: 0.1 }
+                : { duration: 0 }
+            }
+          >
+            <p className="text-[0.55rem] tracking-[0.42em] uppercase text-[#444] font-mono mb-5 md:mb-6">
+              This is me.
+            </p>
 
-        /* right col: large padding on desktop for scroll effect */
-        .bio-right {
-          padding-top: 45vh;
-          padding-bottom: 45vh;
-        }
-
-        @media (max-width: 767px) {
-          /* single column */
-          .bio-grid {
-            display: flex !important;
-            flex-direction: column;
-            gap: 2.5rem;
-            padding-top: 5rem;
-            padding-bottom: 5rem;
-          }
-
-          /* name block: normal flow */
-          .bio-left {
-            position: static;
-            height: auto;
-            padding: 0;
-          }
-
-          /* bio text: no giant vh padding on mobile */
-          .bio-right {
-            padding-top: 0;
-            padding-bottom: 2rem;
-          }
-        }
-      `}</style>
-
-      <div
-        className="bg-[#080808] text-white min-h-screen"
-        style={{ fontFamily: "'Inter', 'Helvetica Neue', sans-serif" }}
-      >
-        <div className="max-w-[1100px] mx-auto px-6 md:px-10">
-
-          {/* single grid — CSS handles mobile vs desktop layout */}
-          <div className="bio-grid grid grid-cols-[1fr_1.15fr] gap-x-28 items-start">
-
-            {/* ── LEFT: name ── */}
-            <div className="bio-left">
-              <p className="text-[0.55rem] tracking-[0.42em] uppercase text-[#444] font-mono mb-5 md:mb-6">
-                This is me.
-              </p>
-
-              <h2 className="font-black italic uppercase leading-[0.88] tracking-[-0.03em]">
-                <span className="block text-xl md:text-2xl font-light not-italic tracking-wide text-[#555] mb-2 md:mb-3">
-                  <AnimatedText
-                    text="Hi, I'm"
-                    startReveal={startReveal}
-                    color="#555"
-                    delayOffset={0}
-                  />
-                </span>
-                <span className="block text-[clamp(2.6rem,10vw,5.2rem)]">
-                  <AnimatedText
-                    text="Husnain"
-                    startReveal={startReveal}
-                    color="#ffffff"
-                    delayOffset={0.3}
-                  />
-                  <AnimatedText
-                    text="."
-                    startReveal={startReveal}
-                    color="#00FF88"
-                    delayOffset={0.3 + "Husnain".length * 0.04}
-                  />
-                </span>
-              </h2>
-
-              <span className="inline-block mt-5 md:mt-6 text-[0.5rem] tracking-[0.38em] uppercase text-[#00FF88] font-mono border border-[#00FF8830] px-3 py-1 w-fit">
-                Frontend Dev
+            <h2 className="font-black italic uppercase leading-[0.88] tracking-[-0.03em]">
+              <span className="block text-xl md:text-2xl font-light not-italic tracking-wide text-[#555] mb-2 md:mb-3">
+                <AnimatedText
+                  text="Hi, I'm"
+                  startReveal={nameReveal}
+                  color="#555"
+                  delayOffset={0}
+                />
               </span>
-            </div>
+              <span className="block text-[clamp(2.6rem,10vw,5.2rem)]">
+                <AnimatedText
+                  text="Husnain"
+                  startReveal={nameReveal}
+                  color="#ffffff"
+                  delayOffset={0.3}
+                />
+                <AnimatedText
+                  text="."
+                  startReveal={nameReveal}
+                  color="#00FF88"
+                  delayOffset={0.3 + "Husnain".length * 0.04}
+                />
+              </span>
+            </h2>
 
-            {/* ── RIGHT: bio ── */}
-            <div className="bio-right flex flex-col gap-4">
-              <div className="w-8 h-px bg-[#00FF88] opacity-40 mb-4" />
+            <motion.span
+              className="inline-block mt-5 md:mt-6 text-[0.5rem] tracking-[0.38em] uppercase text-[#00FF88] font-mono border border-[#00FF8830] px-3 py-1 w-fit"
+              initial={{ opacity: 0 }}
+              animate={revealed ? { opacity: 1 } : { opacity: 0 }}
+              transition={
+                revealed ? { duration: 0.5, delay: 0.9 } : { duration: 0 }
+              }
+            >
+              Frontend Dev
+            </motion.span>
+          </motion.div>
 
-              <ScrollReveal
-                baseOpacity={0.25}
-                enableBlur={true}
-                baseRotation={2}
-                blurStrength={8}
-                wordAnimationEnd="bottom center"
-                rotationEnd="bottom center"
-                textClassName="text-[clamp(1.15rem,2.8vw,1.85rem)] font-semibold leading-[1.6] text-white"
-              >
-                I'm a frontend developer dedicated to turning ideas into creative
-                solutions. I specialize in creating seamless and intuitive user
-                experiences.
-              </ScrollReveal>
+          {/* ── RIGHT: bio paragraphs ── */}
+          <div className="flex flex-col gap-6">
+            <motion.div
+              className="w-8 h-px bg-[#00FF88] opacity-40"
+              initial={{ scaleX: 0, opacity: 0 }}
+              animate={
+                revealed
+                  ? { scaleX: 1, opacity: 0.4 }
+                  : { scaleX: 0, opacity: 0 }
+              }
+              style={{ transformOrigin: "left" }}
+              transition={
+                revealed ? { duration: 0.5, delay: 0.2 } : { duration: 0 }
+              }
+            />
 
-              <ScrollReveal
-                baseOpacity={0.25}
-                enableBlur={true}
-                baseRotation={1.5}
-                blurStrength={6}
-                wordAnimationEnd="bottom center"
-                rotationEnd="bottom center"
-                textClassName="text-[clamp(0.95rem,1.8vw,1.25rem)] font-light leading-[1.9] text-[#777]"
-              >
-                My approach focuses on creating scalable, high-performing solutions
-                tailored to both user needs and business objectives. By prioritizing
-                performance, accessibility, and responsiveness, I strive to deliver
-                experiences that not only engage users but also drive tangible
-                results.
-              </ScrollReveal>
-            </div>
+            {/* Primary paragraph — starts immediately */}
+            <WordReveal
+              revealed={revealed}
+              startDelay={0.3}
+              stagger={0.045}
+              className="text-[clamp(1.15rem,2.8vw,1.85rem)] font-semibold leading-[1.6] text-white"
+            >
+              I&apos;m a frontend developer dedicated to turning ideas into
+              creative solutions. I specialize in creating seamless and
+              intuitive user experiences.
+            </WordReveal>
 
+            {/* Secondary paragraph — starts after primary is mostly done */}
+            <WordReveal
+              revealed={revealed}
+              startDelay={1.4}
+              stagger={0.03}
+              className="text-[clamp(0.95rem,1.8vw,1.25rem)] font-light leading-[1.9] text-[#777]"
+            >
+              My approach focuses on creating scalable, high-performing
+              solutions tailored to both user needs and business objectives. By
+              prioritizing performance, accessibility, and responsiveness, I
+              strive to deliver experiences that not only engage users but also
+              drive tangible results.
+            </WordReveal>
           </div>
         </div>
       </div>
-    </>
+    </div>
   );
 }

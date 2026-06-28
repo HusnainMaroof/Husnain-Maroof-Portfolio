@@ -11,11 +11,13 @@ export function ProjectsSection({
   localP,
   range,
   seekTo,
+  immediateReveal = false,
 }: {
   localP: React.MutableRefObject<number>;
   globalP: React.MutableRefObject<number>;
   range: [number, number];
   seekTo: (p: number) => void;
+  immediateReveal?: boolean;
 }) {
   const router = useRouter();
 
@@ -37,24 +39,29 @@ export function ProjectsSection({
   const cursorRafRef = useRef<number | null>(null);
 
   // ── RAF: localP → activeIndex ────────────────────────────────────────────
-  useEffect(() => {
-    let raf: number;
-    const tick = () => {
-      const v = localP.current;
-      if (!hasEnteredRef.current && v > 0.01) {
-        hasEnteredRef.current = true;
-        setHasEntered(true);
-      }
-      const idx = Math.min(
-        PROJECTS.length - 1,
-        Math.max(0, Math.floor(v * PROJECTS.length)),
-      );
-      setActiveIndex((prev) => (prev === idx ? prev : idx));
-      raf = requestAnimationFrame(tick);
-    };
+useEffect(() => {
+  if (immediateReveal) {
+    hasEnteredRef.current = true;
+    setHasEntered(true);
+  }
+
+  let raf: number;
+  const tick = () => {
+    const v = localP.current;
+    if (!hasEnteredRef.current && v > 0.01) {
+      hasEnteredRef.current = true;
+      setHasEntered(true);
+    }
+    const idx = Math.min(
+      PROJECTS.length - 1,
+      Math.max(0, Math.floor(v * PROJECTS.length)),
+    );
+    setActiveIndex((prev) => (prev === idx ? prev : idx));
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [localP]);
+  };
+  raf = requestAnimationFrame(tick);
+  return () => cancelAnimationFrame(raf);
+}, [localP, immediateReveal]);
 
   // ── Text phase machine ───────────────────────────────────────────────────
   useEffect(() => {

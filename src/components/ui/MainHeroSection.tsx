@@ -1,23 +1,23 @@
 "use client";
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import {
-  motion,
-  useMotionValue,
-  useSpring,
-  MotionValue,
-} from "framer-motion";
+import { motion, useMotionValue, useSpring, MotionValue } from "framer-motion";
 import { AnimatedText, ExitWipeCharacter } from "./TextAnimation";
 import { InteractiveAsciiPortrait } from "../asci art/InteractiveAsciiPortrait";
-import { TitleSlide } from "./TitleSlide";
 import BioText from "./HeroText";
 
 const cinematicEase: [number, number, number, number] = [0.76, 0, 0.24, 1];
 
-const TITLE_FADE_IN_START = 0.3;
-const TITLE_FADE_IN_END   = 0.6;
-const TITLE_HOLD_END      = 0.92;
-const TITLE_FADE_OUT_END  = 0.98;
-const TITLE_REVEAL_AT     = 0.55;
+// ── Scroll zones inside the hero (heroLocalP 0→1) ────────────────────────────
+//
+//  0.00 → 0.55  ASCII portrait lives + explodes
+//  0.55 → 0.75  DEAD ZONE — dark screen, globalP still advances, nothing shown
+//  0.75 → 1.00  Bio fades in, one-shot word stagger fires
+//
+// The dead zone gives the user a clean visual beat between the portrait
+// scattering and the bio appearing. No content is rendered there — it's
+// intentional empty space.
+// ─────────────────────────────────────────────────────────────────────────────
+const BIO_REVEAL_AT = 0.40;
 
 export function HeroSection({
   localP,
@@ -28,48 +28,37 @@ export function HeroSection({
   uiOpacityMV: MotionValue<number>;
   onLoadComplete?: () => void;
 }) {
-  const [count, setCount]   = useState(0);
-  const [phase, setPhase]   = useState(0);
+  const [count, setCount] = useState(0);
+  const [phase, setPhase] = useState(0);
 
-  const titleOpacityRaw    = useMotionValue(0);
-  const titleOpacitySpring = useSpring(titleOpacityRaw, {
-    stiffness: 100,
-    damping: 20,
-  });
-  const [revealed, setRevealed] = useState(false);
-  const revealedRef = useRef(false);
+  // ── Bio state ─────────────────────────────────────────────────────────────
+  // `bioRevealed` is the single boolean prop BioText receives.
+  // Flips true  when localP >= BIO_REVEAL_AT  (bio fades in, stagger fires)
+  // Flips false when localP <  BIO_REVEAL_AT  (instant reset, re-entry replays)
+  const [bioRevealed, setBioRevealed] = useState(false);
+  const bioRevealedRef = useRef(false);
+
   const hasFiredReady = useRef(false);
 
-  // ── RAF: title opacity + revealed driven by localP ───────────────────────
+  // ── RAF: drive bioRevealed from localP ───────────────────────────────────
   useEffect(() => {
-    if (phase < 4) return;
+    if (phase < 3) return;
 
     let raf: number;
     const tick = () => {
       const v = localP.current;
+      const shouldReveal = v >= BIO_REVEAL_AT;
 
-      let opacity = 0;
-      if (v >= TITLE_FADE_IN_START && v < TITLE_FADE_IN_END) {
-        opacity = (v - TITLE_FADE_IN_START) / (TITLE_FADE_IN_END - TITLE_FADE_IN_START);
-      } else if (v >= TITLE_FADE_IN_END && v <= TITLE_HOLD_END) {
-        opacity = 1;
-      } else if (v > TITLE_HOLD_END && v < TITLE_FADE_OUT_END) {
-        opacity = 1 - (v - TITLE_HOLD_END) / (TITLE_FADE_OUT_END - TITLE_HOLD_END);
-      }
-
-      titleOpacityRaw.set(Math.max(0, Math.min(1, opacity)));
-
-      const shouldReveal = v >= TITLE_REVEAL_AT && v <= TITLE_FADE_OUT_END;
-      if (shouldReveal !== revealedRef.current) {
-        revealedRef.current = shouldReveal;
-        setRevealed(shouldReveal);
+      if (shouldReveal !== bioRevealedRef.current) {
+        bioRevealedRef.current = shouldReveal;
+        setBioRevealed(shouldReveal);
       }
 
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [phase, localP, titleOpacityRaw]);
+  }, [phase, localP]);
 
   // ── Counter ───────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -102,7 +91,7 @@ export function HeroSection({
     return () => clearTimeout(timer);
   }, [phase]);
 
-  // ── Fire onLoadComplete exactly once when phase 5 is reached ──────────────
+  // ── Fire onLoadComplete exactly once ──────────────────────────────────────
   useEffect(() => {
     if (phase === 5 && !hasFiredReady.current) {
       hasFiredReady.current = true;
@@ -136,7 +125,7 @@ export function HeroSection({
       </div>
 
       {/* PHASE 2+: EXPANDING BACKGROUND */}
-      <div className="absolute inset-0 flex items-center justify-center z-10 bg-[#212121] ">
+      <div className="absolute inset-0 flex items-center justify-center z-10 bg-[#212121]">
         {phase >= 2 && (
           <motion.div
             className="relative flex items-center justify-center overflow-hidden bg-[#050505]"
@@ -147,19 +136,22 @@ export function HeroSection({
               borderRadius: "1rem",
             }}
             animate={{
-              width:        phase >= 3 ? "100vw" : "280px",
-              height:       phase >= 3 ? "100vh" : "400px",
-              opacity:      1,
-              borderRadius: phase >= 3 ? "0rem"  : "1rem",
+              width: phase >= 3 ? "100vw" : "280px",
+              height: phase >= 3 ? "100vh" : "400px",
+              opacity: 1,
+              borderRadius: phase >= 3 ? "0rem" : "1rem",
             }}
             transition={{
-              opacity:      { duration: 0.4 },
-              width:        { duration: 1.0, ease: cinematicEase },
-              height:       { duration: 1.0, ease: cinematicEase },
+              opacity: { duration: 0.4 },
+              width: { duration: 1.0, ease: cinematicEase },
+              height: { duration: 1.0, ease: cinematicEase },
               borderRadius: { duration: 1.0, ease: cinematicEase },
             }}
             onAnimationComplete={handleExpandComplete}
           >
+            {/* ASCII portrait — explosion driven by localP (scrollRef).
+                InteractiveAsciiPortrait already handles its own fade via
+                explosionPower, so no extra opacity wiring needed here. */}
             {phase >= 4 && (
               <InteractiveAsciiPortrait
                 image="/images/main_hero_image1.png"
@@ -173,18 +165,22 @@ export function HeroSection({
         )}
       </div>
 
-      {/* TITLE SLIDE */}
+      {/* BIO OVERLAY
+          Sits at z-20, above the portrait (z-10).
+          Rendered once phase 4 is reached — but BioText itself is gated
+          by the `revealed` boolean so nothing animates until localP >= 0.75.
+          Between 0.55 and 0.75 this div exists in the DOM but is invisible
+          (BioText words are all opacity:0) — that's the intentional dead zone.
+          pointer-events-none so virtual scroll system stays in control. */}
       {phase >= 4 && (
-        <motion.div
-          style={{ opacity: titleOpacitySpring }}
-          className="absolute inset-0 z-20"
-        >
-          <TitleSlide revealed={revealed} />
-          <BioText/>
-        </motion.div>
+        <div className="absolute inset-0 z-20 pointer-events-none">
+          <BioText revealed={bioRevealed} />
+        </div>
       )}
 
-      {/* UI LABELS — name + title */}
+      {/* UI LABELS — name + title.
+          Fade out early (heroUiOpacity drives this from HomeScreen via uiOpacityMV)
+          so they're gone before the dead zone starts. */}
       {phase >= 4 && (
         <motion.div
           style={{ opacity: uiOpacityMV }}
@@ -198,10 +194,19 @@ export function HeroSection({
             </p>
             <h2 className="text-3xl md:text-5xl lg:text-6xl font-display font-black italic uppercase leading-[0.9]">
               <span className="block text-primary">
-                <AnimatedText text="HUSNAIN" startReveal={true} color="#00FF88" />
+                <AnimatedText
+                  text="HUSNAIN"
+                  startReveal={true}
+                  color="#00FF88"
+                />
               </span>
               <span className="block">
-                <AnimatedText text="MAROOF" startReveal={true} delayOffset={0.2} color="#FFFFFF" />
+                <AnimatedText
+                  text="MAROOF"
+                  startReveal={true}
+                  delayOffset={0.2}
+                  color="#FFFFFF"
+                />
               </span>
             </h2>
           </div>
@@ -213,10 +218,20 @@ export function HeroSection({
             </p>
             <h2 className="text-xl md:text-5xl lg:text-6xl font-display font-black italic uppercase leading-[0.9] text-right">
               <span className="block text-primary">
-                <AnimatedText text="FULL STACK" startReveal={true} delayOffset={0.4} color="#00FF88" />
+                <AnimatedText
+                  text="FULL STACK"
+                  startReveal={true}
+                  delayOffset={0.4}
+                  color="#00FF88"
+                />
               </span>
               <span className="block">
-                <AnimatedText text="DEVELOPER" startReveal={true} delayOffset={0.6} color="#FFFFFF" />
+                <AnimatedText
+                  text="DEVELOPER"
+                  startReveal={true}
+                  delayOffset={0.6}
+                  color="#FFFFFF"
+                />
               </span>
             </h2>
           </div>

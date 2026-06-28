@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useRef, useState, useEffect, useCallback } from "react";
 import { motion, useTransform, useSpring, useMotionValue } from "framer-motion";
 import { Navbar } from "./ui/NavBar";
 import { HeroSection } from "./ui/MainHeroSection";
@@ -10,25 +10,51 @@ import { useVirtualScroll } from "../lib/useVirtualScroll";
 import { useLocalProgress } from "../lib/useLocalProgress";
 import MyStack from "./ui/MyStack";
 
+// ─── RANGES ──────────────────────────────────────────────────────────────────
+// Hero expanded to 0→0.35 to give the bio word-scrub plenty of scroll room.
+// Entry corridors kept at the same width (0.08) as before.
+// All subsequent ranges shifted proportionally.
+// ─────────────────────────────────────────────────────────────────────────────
 export const RANGES = {
-  hero: [0.0, 0.12] as [number, number],
-  services: [0.2, 0.45] as [number, number],
-  myStack: [0.5, 0.6] as [number, number],
-  projects: [0.7, 0.88] as [number, number],
+  hero: [0.0, 0.30] as [number, number],
+  services: [0.33, 0.58] as [number, number],
+  myStack: [0.61, 0.73] as [number, number],
+  projects: [0.76, 0.91] as [number, number],
   footer: [0.95, 1.0] as [number, number],
 };
 
 export const ENTRY = {
-  services: [0.12, 0.2] as [number, number],
-  myStack: [0.45, 0.5] as [number, number],
-  projects: [0.6, 0.65] as [number, number],
-  footer: [0.88, 0.95] as [number, number],
+  services: [0.30, 0.33] as [number, number],
+  myStack: [0.58, 0.61] as [number, number],
+  projects: [0.73, 0.76] as [number, number],
+  footer: [0.91, 0.95] as [number, number],
 };
 
-const WHEEL_SPEED = 0.0002;
+// ─── PER-SECTION WHEEL SPEED ─────────────────────────────────────────────────
+// Hero is slowest — the bio scrub needs fine-grained control.
+// ─────────────────────────────────────────────────────────────────────────────
+const SECTION_SPEEDS = {
+  hero: 0.0001, // slow — gives bio room to breathe
+  services: 0.0002,
+  myStack: 0.0002,
+  projects: 0.0002,
+  footer: 0.0002,
+  default: 0.0002,
+};
 
-// Threshold at which we consider the panel "fully in" — spring settles to 1.0
-// but we fire at 0.92 so the stagger starts just as the panel lands, not after.
+function getWheelSpeed(p: number): number {
+  if (p <= RANGES.hero[1]) return SECTION_SPEEDS.hero;
+  if (p >= ENTRY.services[0] && p <= RANGES.services[1])
+    return SECTION_SPEEDS.services;
+  if (p >= ENTRY.myStack[0] && p <= RANGES.myStack[1])
+    return SECTION_SPEEDS.myStack;
+  if (p >= ENTRY.projects[0] && p <= RANGES.projects[1])
+    return SECTION_SPEEDS.projects;
+  if (p >= ENTRY.footer[0] && p <= RANGES.footer[1])
+    return SECTION_SPEEDS.footer;
+  return SECTION_SPEEDS.default;
+}
+
 const MYSTACK_FULLY_IN_THRESHOLD = 0.92;
 
 export default function HomeScreen() {
@@ -42,8 +68,6 @@ export default function HomeScreen() {
   const [servicesActive, setServicesActive] = useState(false);
   const servicesActiveRef = useRef(false);
 
-  // myStackFullyVisible: true only once the slide-up spring crosses the threshold.
-  // Passed to MyStack so it triggers GSAP at the right moment.
   const [myStackFullyVisible, setMyStackFullyVisible] = useState(false);
   const myStackFullyVisibleRef = useRef(false);
 
@@ -148,6 +172,7 @@ export default function HomeScreen() {
     (deltaY: number) => {
       if (scrollLocked.current) return;
       const p = globalP.current;
+      const speed = getWheelSpeed(p);
       const inServices = p >= ENTRY.services[0] && p <= RANGES.services[1];
 
       if (inServices && servicesEntryRaw.get() >= 0.98) {
@@ -175,7 +200,7 @@ export default function HomeScreen() {
         }
       }
 
-      seekTo(Math.max(0, Math.min(1, p + deltaY * WHEEL_SPEED)));
+      seekTo(Math.max(0, Math.min(1, p + deltaY * speed)));
     },
     [globalP, seekTo, scrollLocked, servicesEntryRaw],
   );
@@ -192,8 +217,8 @@ export default function HomeScreen() {
 
   // ── Touch ─────────────────────────────────────────────────────────────────
   useEffect(() => {
-    let startX = 0;
-    let startY = 0;
+    let startX = 0,
+      startY = 0;
     let axis: "h" | "v" | null = null;
 
     const onTouchStart = (e: TouchEvent) => {
@@ -207,12 +232,12 @@ export default function HomeScreen() {
       const dx = e.touches[0].clientX - startX;
       const dy = e.touches[0].clientY - startY;
 
-      if (!axis && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
+      if (!axis && (Math.abs(dx) > 6 || Math.abs(dy) > 6))
         axis = Math.abs(dx) > Math.abs(dy) ? "h" : "v";
-      }
       if (!axis) return;
 
       const p = globalP.current;
+      const speed = getWheelSpeed(p);
       const inServices =
         p >= ENTRY.services[0] &&
         p <= RANGES.services[1] &&
@@ -232,7 +257,7 @@ export default function HomeScreen() {
 
           if ((deltaY > 0 && atEnd) || (deltaY < 0 && atStart)) {
             e.preventDefault();
-            seekTo(Math.max(0, Math.min(1, p + deltaY * WHEEL_SPEED * 4)));
+            seekTo(Math.max(0, Math.min(1, p + deltaY * speed * 4)));
             startY = e.touches[0].clientY;
           }
           return;
@@ -240,7 +265,7 @@ export default function HomeScreen() {
       }
 
       e.preventDefault();
-      seekTo(Math.max(0, Math.min(1, p + deltaY * WHEEL_SPEED * 4)));
+      seekTo(Math.max(0, Math.min(1, p + deltaY * speed * 4)));
       startY = e.touches[0].clientY;
     };
 
@@ -264,8 +289,7 @@ export default function HomeScreen() {
       const totalCards = el.children.length;
       const cardIndex = Math.round(el.scrollLeft / cardWidth);
       const frac = (RANGES.services[1] - RANGES.services[0]) / totalCards;
-      const target = RANGES.services[0] + cardIndex * frac;
-      seekTo(target);
+      seekTo(RANGES.services[0] + cardIndex * frac);
     };
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => el.removeEventListener("scroll", onScroll);
@@ -283,7 +307,15 @@ export default function HomeScreen() {
       const p = globalP.current;
 
       if (heroReady.current) {
-        heroOpacity.set(p <= 0.08 ? 1 : p <= 0.12 ? 1 - (p - 0.08) / 0.04 : 0);
+        const fadeStart = RANGES.hero[1] - 0.04;
+        const fadeEnd = RANGES.hero[1];
+        heroOpacity.set(
+          p <= fadeStart
+            ? 1
+            : p <= fadeEnd
+              ? 1 - (p - fadeStart) / (fadeEnd - fadeStart)
+              : 0,
+        );
       }
 
       servicesEntryRaw.set(ep(p, ENTRY.services));
@@ -291,19 +323,14 @@ export default function HomeScreen() {
       projectsEntryRaw.set(ep(p, ENTRY.projects));
       footerEntryRaw.set(ep(p, ENTRY.footer));
 
-      // Services active
       const nowServices = p >= ENTRY.services[0] && p < ENTRY.myStack[0];
       if (nowServices !== servicesActiveRef.current) {
         servicesActiveRef.current = nowServices;
         setServicesActive(nowServices);
       }
 
-      // MyStack: read the SPRING value (not raw) to know when panel has landed.
-      // myStackEntry is the spring — .get() returns its current animated value.
       const springVal = myStackEntry.get();
       const panelInRange = p >= ENTRY.myStack[0] && p < ENTRY.projects[0];
-
-      // Fully visible: panel in range AND spring has crossed threshold
       const fullyVisible =
         panelInRange && springVal >= MYSTACK_FULLY_IN_THRESHOLD;
 
@@ -316,7 +343,6 @@ export default function HomeScreen() {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-    // myStackEntry is a stable MotionValue ref — safe to include
   }, [
     globalP,
     heroOpacity,
@@ -330,10 +356,9 @@ export default function HomeScreen() {
   return (
     <>
       <div className="fixed inset-0 overflow-hidden">
-        {/* Navbar — slides in after hero load */}
         {heroLoaded && (
           <motion.div
-            className="absolute inset-x-0 top-0 z-[100]"
+            className="absolute inset-x-0 top-0 z-100"
             initial={{ opacity: 0, y: -16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, ease: "easeOut" }}
@@ -388,9 +413,8 @@ export default function HomeScreen() {
             boxShadow: myStackShadow,
             borderRadius: myStackRadius,
           }}
-          className="absolute inset-0 z-[25] overflow-hidden"
+          className="absolute inset-0 z-25 overflow-hidden"
         >
-          {/* isVisible = spring has fully landed, not just started sliding */}
           <MyStack isVisible={myStackFullyVisible} />
         </motion.div>
 

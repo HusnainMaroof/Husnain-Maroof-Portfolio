@@ -2,26 +2,6 @@
 
 import React, { useEffect, useRef, useState } from "react";
 
-/**
- * WebGLImageTransition
- *
- * Renders a stack of images on a <canvas> and cross-dissolves between
- * them using a horizontal-tear / slice-glitch fragment shader whenever
- * `activeIndex` changes. Falls back to a plain crossfaded <img> stack
- * if WebGL isn't available, and uses a plain opacity fade when
- * prefers-reduced-motion is set.
- *
- * Fixes vs original:
- * - ResizeObserver fires immediately on mount (via { box: "content-box" })
- *   so the canvas is correctly sized before the first frame on mobile.
- * - resizeCanvas guards against zero-dimension containers.
- * - getOrCreateTexture is pure (no closure over stale renderFrame).
- * - tick / renderFrame are stable refs so activeIndex effect never
- *   captures a stale closure.
- * - Distortion wave removed — it caused visible judder on low-end mobile.
- *   Slice glitch kept but strength halved on small screens.
- */
-
 interface WebGLImageTransitionProps {
   images: string[];
   activeIndex: number;
@@ -40,6 +20,10 @@ void main() {
 }
 `;
 
+// FIX 1: coverUv scale axes were swapped.
+// "cover" means: whichever axis would show letterboxing, scale it UP so it
+// fills. When the canvas is wider than the image (resAspect > imgAspect) we
+// must scale the X axis up (multiply x by resAspect/imgAspect), not Y.
 const FRAGMENT_SHADER = `
 precision highp float;
 varying vec2 v_uv;
@@ -57,8 +41,8 @@ vec2 coverUv(vec2 uv, vec2 res, vec2 imgSize) {
   float resAspect = res.x / res.y;
   float imgAspect = imgSize.x / imgSize.y;
   vec2 scale = resAspect > imgAspect
-    ? vec2(1.0, resAspect / imgAspect)
-    : vec2(imgAspect / resAspect, 1.0);
+    ? vec2(resAspect / imgAspect, 1.0)
+    : vec2(1.0, imgAspect / resAspect);
   return (uv - 0.5) * scale + 0.5;
 }
 
@@ -67,7 +51,6 @@ float hash(float n) {
 }
 
 void main() {
-  /* Intensity peaks at mid-transition, zero at both ends — no judder */
   float intensity = sin(clamp(u_progress, 0.0, 1.0) * 3.14159265);
 
   float sliceId = floor(v_uv.y * u_slices);
@@ -76,9 +59,7 @@ void main() {
 
   vec2 distorted = v_uv;
   distorted.x   += shift;
-
-  /* Clamp distorted UV so we never sample outside [0,1] */
-  distorted.x = clamp(distorted.x, 0.0, 1.0);
+  distorted.x    = clamp(distorted.x, 0.0, 1.0);
 
   vec2 fromUv = coverUv(distorted, u_resolution, u_fromSize);
   vec2 toUv   = coverUv(distorted, u_resolution, u_toSize);
@@ -87,7 +68,6 @@ void main() {
   vec3 toColor   = texture2D(u_to, toUv).rgb;
 
   vec3 color = mix(fromColor, toColor, smoothstep(0.0, 1.0, u_progress));
-  /* Subtle darkening at peak — keep it mild */
   color *= (1.0 - intensity * 0.12);
 
   gl_FragColor = vec4(color, 1.0);
@@ -110,7 +90,7 @@ function createShader(gl: WebGLRenderingContext, type: number, source: string) {
 function createProgram(
   gl: WebGLRenderingContext,
   vsSource: string,
-  fsSource: string
+  fsSource: string,
 ) {
   const vs = createShader(gl, gl.VERTEX_SHADER, vsSource);
   const fs = createShader(gl, gl.FRAGMENT_SHADER, fsSource);
@@ -145,35 +125,109 @@ export function WebGLImageTransition({
   className = "",
   duration = 1100,
   slices = 20,
-  strength = 0.10,
+  strength = 0.1,
 }: WebGLImageTransitionProps) {
-  const canvasRef    = useRef<HTMLCanvasElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [supported, setSupported] = useState(true);
 
-  /* All WebGL state in refs — zero re-renders during animation */
-  const glRef       = useRef<WebGLRenderingContext | null>(null);
-  const programRef  = useRef<WebGLProgram | null>(null);
+  const glRef = useRef<WebGLRenderingContext | null>(null);
+  const programRef = useRef<WebGLProgram | null>(null);
   const texturesRef = useRef<Map<string, TextureEntry>>(new Map());
   const uniformsRef = useRef<Record<string, WebGLUniformLocation | null>>({});
 
   const currentIndexRef = useRef(activeIndex);
-  const prevIndexRef    = useRef(activeIndex);
-  const progressRef     = useRef(1); // start at 1 = fully showing first image
-  const animStartRef    = useRef(0);
-  const animatingRef    = useRef(false);
-  const rafRef          = useRef<number | null>(null);
+  const prevIndexRef = useRef(activeIndex);
+  const progressRef = useRef(1);
+  const animStartRef = useRef(0);
+  const animatingRef = useRef(false);
+  const rafRef = useRef<number | null>(null);
   const reducedMotionRef = useRef(false);
-
   const resizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  /* ── helpers as stable refs so effects never capture stale closures ── */
   const renderRef = useRef<() => void>(() => {});
-  const tickRef   = useRef<(now: number) => void>(() => {});
+  const tickRef = useRef<(now: number) => void>(() => {});
 
-  // ── Init WebGL once ────────────────────────────────────────────────────
+  // ── helpers ─────────────────────────────────────────────────────────────
+
+  function resizeCanvas() {
+    const gl = glRef.current;
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!gl || !canvas || !container) return;
+
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+    if (w === 0 || h === 0) return; // guard: layout not ready yet
+
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const width = Math.floor(w * dpr);
+    const height = Math.floor(h * dpr);
+
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+      gl.viewport(0, 0, width, height);
+    }
+  }
+
+  function getOrLoadTexture(
+    gl: WebGLRenderingContext,
+    url: string,
+  ): TextureEntry {
+    const existing = texturesRef.current.get(url);
+    if (existing) return existing;
+
+    const texture = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA,
+      1,
+      1,
+      0,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      new Uint8Array([20, 20, 20, 255]),
+    );
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+    const entry: TextureEntry = { texture, width: 1, height: 1, loaded: false };
+    texturesRef.current.set(url, entry);
+
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      const currentGl = glRef.current;
+      if (!currentGl) return;
+      currentGl.bindTexture(currentGl.TEXTURE_2D, texture);
+      currentGl.texImage2D(
+        currentGl.TEXTURE_2D,
+        0,
+        currentGl.RGBA,
+        currentGl.RGBA,
+        currentGl.UNSIGNED_BYTE,
+        img,
+      );
+      entry.width = img.naturalWidth;
+      entry.height = img.naturalHeight;
+      entry.loaded = true;
+      renderRef.current();
+    };
+    img.onerror = () =>
+      console.warn("WebGLImageTransition: failed to load", url);
+    img.src = url;
+
+    return entry;
+  }
+
+  // ── Init WebGL once ──────────────────────────────────────────────────────
   useEffect(() => {
-    const canvas    = canvasRef.current;
+    const canvas = canvasRef.current;
     const container = containerRef.current;
     if (!canvas || !container) return;
 
@@ -181,20 +235,30 @@ export function WebGLImageTransition({
       typeof window !== "undefined" &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-    const gl = (
-      canvas.getContext("webgl", { antialias: false, alpha: false }) ||
-      canvas.getContext("experimental-webgl", { antialias: false, alpha: false })
-    ) as WebGLRenderingContext | null;
+    const gl = (canvas.getContext("webgl", {
+      antialias: false,
+      alpha: false,
+    }) ||
+      canvas.getContext("experimental-webgl", {
+        antialias: false,
+        alpha: false,
+      })) as WebGLRenderingContext | null;
 
-    if (!gl) { setSupported(false); return; }
+    if (!gl) {
+      setSupported(false);
+      return;
+    }
     glRef.current = gl;
 
     const program = createProgram(gl, VERTEX_SHADER, FRAGMENT_SHADER);
-    if (!program) { setSupported(false); return; }
+    if (!program) {
+      setSupported(false);
+      return;
+    }
     programRef.current = program;
     gl.useProgram(program);
 
-    const quad   = new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]);
+    const quad = new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]);
     const buffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
     gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
@@ -203,31 +267,30 @@ export function WebGLImageTransition({
     gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
 
     uniformsRef.current = {
-      u_from:       gl.getUniformLocation(program, "u_from"),
-      u_to:         gl.getUniformLocation(program, "u_to"),
-      u_fromSize:   gl.getUniformLocation(program, "u_fromSize"),
-      u_toSize:     gl.getUniformLocation(program, "u_toSize"),
+      u_from: gl.getUniformLocation(program, "u_from"),
+      u_to: gl.getUniformLocation(program, "u_to"),
+      u_fromSize: gl.getUniformLocation(program, "u_fromSize"),
+      u_toSize: gl.getUniformLocation(program, "u_toSize"),
       u_resolution: gl.getUniformLocation(program, "u_resolution"),
-      u_progress:   gl.getUniformLocation(program, "u_progress"),
-      u_slices:     gl.getUniformLocation(program, "u_slices"),
-      u_strength:   gl.getUniformLocation(program, "u_strength"),
+      u_progress: gl.getUniformLocation(program, "u_progress"),
+      u_slices: gl.getUniformLocation(program, "u_slices"),
+      u_strength: gl.getUniformLocation(program, "u_strength"),
     };
 
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
 
-    /* ── renderFrame — stable, reads from refs ── */
     renderRef.current = () => {
-      const _gl      = glRef.current;
+      const _gl = glRef.current;
       const _program = programRef.current;
-      const _canvas  = canvasRef.current;
+      const _canvas = canvasRef.current;
       if (!_gl || !_program || !_canvas) return;
 
       const fromUrl = images[prevIndexRef.current];
-      const toUrl   = images[currentIndexRef.current];
+      const toUrl = images[currentIndexRef.current];
       if (!fromUrl || !toUrl) return;
 
       const fromEntry = getOrLoadTexture(_gl, fromUrl);
-      const toEntry   = getOrLoadTexture(_gl, toUrl);
+      const toEntry = getOrLoadTexture(_gl, toUrl);
 
       _gl.useProgram(_program);
       const u = uniformsRef.current;
@@ -250,7 +313,6 @@ export function WebGLImageTransition({
       _gl.drawArrays(_gl.TRIANGLES, 0, 6);
     };
 
-    /* ── tick — drives the animation RAF loop ── */
     tickRef.current = (now: number) => {
       const effectiveDuration = reducedMotionRef.current
         ? Math.min(duration, 250)
@@ -262,19 +324,20 @@ export function WebGLImageTransition({
       if (t < 1) {
         rafRef.current = requestAnimationFrame(tickRef.current);
       } else {
-        animatingRef.current    = false;
-        prevIndexRef.current    = currentIndexRef.current;
+        animatingRef.current = false;
+        prevIndexRef.current = currentIndexRef.current;
       }
     };
 
-    /* Preload all images eagerly */
     images.forEach((url) => getOrLoadTexture(gl, url));
 
-    /* Initial size + render */
-    resizeCanvas();
-    renderRef.current();
+    // FIX 2: defer first resize+render to rAF so the container has layout
+    // dimensions before we read clientWidth / clientHeight.
+    rafRef.current = requestAnimationFrame(() => {
+      resizeCanvas();
+      renderRef.current();
+    });
 
-    /* ResizeObserver — fires immediately on mount too */
     const ro = new ResizeObserver(() => {
       if (resizeTimeoutRef.current) clearTimeout(resizeTimeoutRef.current);
       resizeTimeoutRef.current = setTimeout(() => {
@@ -282,7 +345,7 @@ export function WebGLImageTransition({
         renderRef.current();
       }, 100);
     });
-    ro.observe(container);
+    ro.observe(container, { box: "content-box" });
 
     return () => {
       ro.disconnect();
@@ -295,86 +358,26 @@ export function WebGLImageTransition({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ── Helpers ─────────────────────────────────────────────────────────── */
-
-  function resizeCanvas() {
-    const gl        = glRef.current;
-    const canvas    = canvasRef.current;
-    const container = containerRef.current;
-    if (!gl || !canvas || !container) return;
-
-    const dpr    = Math.min(window.devicePixelRatio || 1, 2);
-    const width  = Math.max(1, Math.floor(container.clientWidth  * dpr));
-    const height = Math.max(1, Math.floor(container.clientHeight * dpr));
-
-    if (canvas.width !== width || canvas.height !== height) {
-      canvas.width  = width;
-      canvas.height = height;
-      gl.viewport(0, 0, width, height);
-    }
-  }
-
-  function getOrLoadTexture(
-    gl: WebGLRenderingContext,
-    url: string
-  ): TextureEntry {
-    const existing = texturesRef.current.get(url);
-    if (existing) return existing;
-
-    const texture = gl.createTexture()!;
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    /* 1×1 dark placeholder so shader always has something to sample */
-    gl.texImage2D(
-      gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0,
-      gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([20, 20, 20, 255])
-    );
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-
-    const entry: TextureEntry = { texture, width: 1, height: 1, loaded: false };
-    texturesRef.current.set(url, entry);
-
-    const img      = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => {
-      const currentGl = glRef.current;
-      if (!currentGl) return;
-      currentGl.bindTexture(currentGl.TEXTURE_2D, texture);
-      currentGl.texImage2D(
-        currentGl.TEXTURE_2D, 0, currentGl.RGBA,
-        currentGl.RGBA, currentGl.UNSIGNED_BYTE, img
-      );
-      entry.width  = img.naturalWidth;
-      entry.height = img.naturalHeight;
-      entry.loaded = true;
-      /* Re-render once the real image is in GPU memory */
-      renderRef.current();
-    };
-    img.onerror = () => console.warn("WebGLImageTransition: failed to load", url);
-    img.src = url;
-
-    return entry;
-  }
-
-  // ── React to activeIndex changes ─────────────────────────────────────
+  // ── React to activeIndex changes ─────────────────────────────────────────
   useEffect(() => {
     if (activeIndex === currentIndexRef.current) return;
-    prevIndexRef.current    = currentIndexRef.current;
+    prevIndexRef.current = currentIndexRef.current;
     currentIndexRef.current = activeIndex;
-    progressRef.current     = 0;
-    animStartRef.current    = performance.now();
-    animatingRef.current    = true;
+    progressRef.current = 0;
+    animStartRef.current = performance.now();
+    animatingRef.current = true;
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(tickRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeIndex]);
 
-  /* ── Fallback ─────────────────────────────────────────────────────── */
+  // ── Fallback ─────────────────────────────────────────────────────────────
   if (!supported) {
     return (
-      <div ref={containerRef} className={`relative overflow-hidden ${className}`}>
+      <div
+        ref={containerRef}
+        className={`relative overflow-hidden ${className}`}
+      >
         {images.map((src, i) => (
           <img
             key={src}
@@ -389,8 +392,20 @@ export function WebGLImageTransition({
   }
 
   return (
-    <div ref={containerRef} className={`relative overflow-hidden ${className}`}>
-      <canvas ref={canvasRef} className="block h-full w-full" />
+    // FIX 3: ensure the wrapper always fills its parent and the canvas
+    // fills the wrapper. The canvas element is "replaced content" — CSS
+    // width/height alone don't set the drawing-buffer size, but they DO
+    // control the layout box that the container measures via clientWidth.
+    <div
+      ref={containerRef}
+      className={`relative overflow-hidden ${className}`}
+      style={{ width: "100%", height: "100%" }}
+    >
+      <canvas
+        ref={canvasRef}
+        // FIX 3 cont: inline styles beat Tailwind specificity for replaced elements
+        style={{ display: "block", width: "100%", height: "100%" }}
+      />
     </div>
   );
 }
